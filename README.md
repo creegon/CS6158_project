@@ -28,8 +28,9 @@ CS6158 project/
 │
 ├── utils/                       # 工具函数
 │   ├── __init__.py
-│   ├── data_utils.py           # 数据处理工具
-│   └── prompt_utils.py         # Prompt处理工具
+│   ├── data_utils.py           # 数据处理工具（CSV/JSON读写、Alpaca格式转换）
+│   ├── prompt_utils.py         # Prompt处理工具（模板加载、格式化）
+│   └── evaluation_utils.py     # 评估工具函数（答案提取、指标计算）
 │
 ├── agents/                      # Agent模块
 │   ├── __init__.py
@@ -40,10 +41,9 @@ CS6158 project/
 │
 ├── evaluation/                  # 评估模块
 │   ├── __init__.py
-│   ├── evaluator.py            # 评估器主类
-│   ├── eval_utils.py           # 评估工具函数
-│   ├── data_loader.py          # 数据加载器
-│   └── report_generator.py     # 报告生成器
+│   ├── evaluator.py            # 评估器主类（整合评估流程）
+│   ├── data_loader.py          # 数据加载器（Alpaca JSON & CSV标签）
+│   └── report_generator.py     # 报告生成器（文本/JSON报告）
 │
 ├── examples/                    # 使用示例
 │   ├── distillation_example.py
