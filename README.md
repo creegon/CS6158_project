@@ -33,10 +33,15 @@ CS6158 project/
 │   ├── data_explainer_example.py
 │   └── multi_agent_example.py
 │
+├── dataset/                     # 数据集目录
+│   └── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
+│
 ├── output/                      # 输出目录
 │   └── (生成的文件)
 │
-└── FlakyLens_dataset_with_nonflaky_indented.csv  # 数据集
+├── main.py                      # 快速启动脚本（交互式界面）
+├── README.md                    # 项目文档
+└── .gitignore                   # Git忽略文件
 ```
 
 ## 🚀 快速开始
