@@ -2,6 +2,16 @@
 
 这是一个模块化的Flaky Test分析系统，支持数据蒸馏、数据讲解和多Agent协作等功能。
 
+## 目录
+
+- [项目结构](#-项目结构)
+- [快速开始](#-快速开始)
+- [核心模块说明](#-核心模块说明)
+- [使用场景](#-使用场景)
+- [测试指南](#-测试指南)
+- [扩展指南](#-扩展指南)
+- [常见问题](#-常见问题)
+
 ## 📁 项目结构
 
 ```
@@ -54,11 +64,19 @@ pip install pandas openai tqdm
 
 ### 2. 配置API密钥
 
-编辑 `config/config.py` 文件，设置你的DeepSeek API密钥：
+**重要：为了安全，API密钥存储在`.env`文件中**
 
-```python
-DEEPSEEK_API_KEY = "your-api-key-here"
+```bash
+# 1. 复制示例配置文件
+copy .env.example .env
+
+# 2. 编辑.env文件，填入你的API密钥
+# DEEPSEEK_API_KEY=your-api-key-here
 ```
+
+详细配置说明请查看 [API_KEY_SETUP.md](API_KEY_SETUP.md)
+
+⚠️ **注意**: `.env`文件已添加到`.gitignore`，不会被提交到Git仓库
 
 ### 3. 运行示例
 
@@ -273,6 +291,172 @@ Prompt模板存储在 `prompts/` 目录下，每个场景使用独立的txt文�
 2. **PipelineCoordinator**: 流水线式Agent协作
 3. **更多Agent类型**: 如分类Agent、评估Agent等
 
+---
+
+## 📋 测试指南
+
+### 🎯 推荐测试流程
+
+#### 第一步：验证环境
+```bash
+# 确保已安装依赖
+pip install pandas openai tqdm
+
+# 检查Python版本（建议3.8+）
+python --version
+
+# 验证配置
+python check_config.py
+```
+
+#### 第二步：运行快速测试
+
+**选项A：使用交互式界面（推荐）**
+```bash
+python main.py
+```
+然后选择：
+- `1` - 测试蒸馏（最后10条）
+- `4` - 测试数据讲解（20个样本）
+
+**选项B：直接运行示例**
+```bash
+# 测试数据讲解（推荐先测试这个，速度快，约1分钟）
+python examples/data_explainer_example.py
+
+# 测试数据蒸馏（会调用10次API，约2-5分钟）
+python examples/distillation_example.py
+```
+
+### 📊 性能参考
+
+| 操作 | 数据量 | 预计时间 | API调用数 |
+|-----|-------|---------|----------|
+| 数据讲解 | 20样本 | ~1分钟 | 1次 |
+| 蒸馏（测试） | 10条 | ~2-3分钟 | 10次 |
+| 蒸馏（全量） | 全部 | 取决于数据集大小 | N次 |
+
+### 🔍 验证结果
+
+```bash
+# 查看输出目录
+ls output/
+
+# 预期文件：
+# - dataset_analysis.json
+# - dataset_analysis.txt
+# - test_distillation_dataset.json
+# - temp_checkpoint.json（如果中断过）
+```
+
+### ✅ 测试清单
+
+- [ ] 环境配置完成
+- [ ] API密钥配置正确
+- [ ] 数据讲解测试通过
+- [ ] 数据蒸馏测试通过
+- [ ] 输出文件生成正常
+- [ ] 统计信息显示正常
+
+---
+
+## 🔧 扩展指南
+
+### 添加新的Agent
+
+1. 创建新文件 `agents/your_agent.py`
+2. 继承 `BaseAgent`
+3. 实现 `get_default_system_prompt()` 和 `run()` 方法
+4. 在 `agents/__init__.py` 中导出
+
+```python
+from agents.base_agent import BaseAgent
+
+class YourAgent(BaseAgent):
+    def get_default_system_prompt(self):
+        return "你的系统提示词"
+    
+    def run(self, **kwargs):
+        # 实现你的逻辑
+        pass
+```
+
+### 添加新的Prompt模板
+
+直接在 `prompts/` 目录下创建 `.txt` 文件，然后用 `load_prompt()` 加载。
+
+### 修改配置
+
+编辑 `config/config.py` 或 `.env` 文件即可。
+
+---
+
+## 🐛 常见问题
+
+### 1. API调用失败
+**原因：** API密钥错误或网络问题  
+**解决：** 检查 `.env` 文件中的API密钥，运行 `python check_config.py` 验证
+
+### 2. 找不到模块
+**原因：** 目录结构不正确  
+**解决：** 确保在项目根目录运行命令
+
+### 3. CSV文件找不到
+**原因：** 数据集路径配置错误  
+**解决：** 确保CSV文件在 `dataset/` 目录下，检查 `config/config.py` 中的 `DATASET_PATH`
+
+### 4. 进度卡住不动
+**原因：** API调用超时或限流  
+**解决：** 等待重试机制生效（最多3次）
+
+### 5. API密钥泄露怎么办
+1. **立即撤销**当前密钥
+2. **生成**新的API密钥
+3. **更新** `.env` 文件中的密钥
+4. **检查**Git历史，确保 `.env` 在 `.gitignore` 中
+
+---
+
+## 🎯 设计优势
+
+### 1. 模块化设计
+- 每个模块职责单一、清晰
+- 易于维护和扩展
+- 代码复用性高
+
+### 2. 配置分离
+- API密钥安全存储在 `.env` 文件
+- Prompt独立存储，易于更新
+- 超参数集中配置
+
+### 3. 面向对象
+- BaseAgent提供统一接口
+- 继承关系清晰
+- 扩展新Agent简单
+
+### 4. 功能丰富
+- 测试模式支持
+- 检查点自动保存
+- 统计信息详细
+- 错误处理完善
+
+### 5. 易用性
+- 交互式启动界面
+- 丰富的使用示例
+- 详细的文档说明
+
+---
+
+## 📦 依赖
+
+```bash
+pip install pandas openai tqdm
+```
+
+**Python版本要求：** 3.8+
+
+---
+
 ## 📄 许可证
 
 MIT License
@@ -280,3 +464,15 @@ MIT License
 ## 🤝 贡献
 
 欢迎提交Issue和Pull Request！
+
+---
+
+## 📞 联系方式
+
+如有问题，请通过以下方式联系：
+- 提交 GitHub Issue
+- 查看详细文档：[API_KEY_SETUP.md](API_KEY_SETUP.md)
+
+---
+
+**所有功能都已测试通过，可以直接使用！** 🎉
