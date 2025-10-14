@@ -44,8 +44,14 @@ env/
 # Output
 output/*.json
 output/*.txt
+output/evaluation/
 temp_checkpoint.json
 distillation_dataset_temp.json
+test_*.json
+
+# Test Scripts
+test_*.py
+!examples/
 
 # Logs
 *.log

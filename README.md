@@ -38,10 +38,18 @@ CS6158 project/
 │   ├── data_explainer_agent.py # 数据讲解Agent
 │   └── multi_agent.py          # 多Agent协作框架
 │
+├── evaluation/                  # 评估模块
+│   ├── __init__.py
+│   ├── evaluator.py            # 评估器主类
+│   ├── eval_utils.py           # 评估工具函数
+│   ├── data_loader.py          # 数据加载器
+│   └── report_generator.py     # 报告生成器
+│
 ├── examples/                    # 使用示例
 │   ├── distillation_example.py
 │   ├── data_explainer_example.py
-│   └── multi_agent_example.py
+│   ├── multi_agent_example.py
+│   └── evaluation_example.py   # 评估示例
 │
 ├── dataset/                     # 数据集目录
 │   └── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
@@ -212,6 +220,178 @@ tasks = [
 results = coordinator.execute(tasks)
 ```
 
+### 4. Evaluation模块 (`evaluation/`)
+
+评估模块用于评估Flaky Test分类模型的性能。
+
+#### 支持的分类类型
+
+模型需要判断测试是否为Flaky Test，如果是，还需要分类到以下五种类型之一：
+
+1. **Async (异步相关)** - 异步任务、回调、Promise时序问题
+2. **Conc (并发相关)** - 竞态条件、多线程同步、共享资源冲突
+3. **Time (时间相关)** - 系统时间依赖、超时设置、延迟问题
+4. **UC (无序集合)** - HashMap/Set等无序结构导致的问题
+5. **OD (顺序依赖)** - 测试间执行顺序依赖、状态未清理
+6. **Non-Flaky** - 稳定的测试
+
+#### 答案格式要求
+
+模型输出必须在开头包含标准化的答案格式：
+
+```
+答案：是 - Async
+答案：是 - Conc  
+答案：否 - Non-Flaky
+```
+
+格式说明：
+- `答案：` - 固定前缀
+- `是/否` - 表示是否为Flaky Test
+- `-` - 分隔符
+- `类型` - Async, Conc, Time, UC, OD, 或 Non-Flaky
+
+#### 基本使用
+
+```python
+from evaluation import Evaluator
+
+# 创建评估器
+evaluator = Evaluator(
+    prediction_file='output/predictions.json',  # Alpaca格式
+    ground_truth_file='dataset/labels.csv',      # 真实标签
+    label_column='label'
+)
+
+# 运行评估并保存报告
+metrics = evaluator.run(
+    output_dir='output/evaluation',
+    save_report=True,
+    detailed=True
+)
+```
+
+#### 文件格式要求
+
+**预测结果文件 (JSON - Alpaca格式):**
+```json
+[
+  {
+    "instruction": "请分析以下测试用例...",
+    "input": "测试代码：\n...",
+    "output": "答案：是 - Async\n\n详细分析..."
+  }
+]
+```
+
+**真实标签文件 (CSV):**
+```csv
+id,label,...
+0,async wait,...
+1,concurrency,...
+2,non-flaky,...
+```
+
+支持的标签值会自动标准化：
+- `async wait`, `async`, `Async` → Async
+- `concurrency`, `conc`, `Conc` → Conc
+- `time`, `Time` → Time
+- `unordered collections`, `uc`, `UC` → UC
+- `test order dependency`, `od`, `OD` → OD
+- `non-flaky`, `nonflaky`, `Non-Flaky` → Non-Flaky
+
+#### 评估指标
+
+1. **总体准确率 (Overall Accuracy)**: 同时判断对"是否Flaky"和"具体类型"的准确率
+2. **Flaky检测指标**: 准确率、精确率、召回率、F1分数
+3. **类别分类指标**: 分类准确率和各类别的详细指标
+
+#### 高级用法
+
+```python
+# 分步骤执行
+evaluator = Evaluator(
+    prediction_file='output/predictions.json',
+    ground_truth_file='dataset/labels.csv',
+    label_column='label',
+    id_column='id'  # 可选：指定ID列
+)
+
+evaluator.load_data()
+evaluator.evaluate()
+evaluator.print_report(detailed=True)
+evaluator.save_report('output/evaluation', 'my_report')
+
+# 评估多个模型
+models = {
+    'model_v1': 'output/model_v1_predictions.json',
+    'model_v2': 'output/model_v2_predictions.json',
+}
+
+for name, pred_file in models.items():
+    evaluator = Evaluator(pred_file, 'dataset/labels.csv', label_column='label')
+    metrics = evaluator.run(output_dir=f'output/evaluation/{name}')
+    print(f"{name}: Accuracy={metrics['overall_accuracy']:.2%}")
+```
+
+#### 输出文件
+
+评估完成后会生成：
+
+```
+output/evaluation/
+├── evaluation_report.json  # JSON格式的详细指标
+└── evaluation_report.txt   # 文本格式的可读报告
+```
+
+#### 注意事项
+
+1. **答案格式**: 确保模型输出包含标准的"答案：xxx"格式
+2. **数据对齐**: 预测结果和真实标签的数量可能不同，系统会自动对齐
+3. **标签标准化**: 不同的标签写法会自动标准化
+4. **缺失答案**: 如果某条预测无法提取答案，会显示警告并跳过
+
+## 🎯 使用场景
+````
+```
+
+### 4. Evaluation模块 (`evaluation/`)
+
+评估模块用于评估Flaky Test分类模型的性能。
+
+#### Evaluator (`evaluator.py`)
+
+评估器主类，整合所有评估功能。
+
+**主要功能:**
+- 加载Alpaca格式的预测结果
+- 加载CSV格式的真实标签
+- 计算各项评估指标
+- 生成详细的评估报告
+
+**使用示例:**
+```python
+from evaluation import Evaluator
+
+evaluator = Evaluator(
+    prediction_file='output/distillation_test_random.json',
+    ground_truth_file='dataset/FlakyLens_dataset_with_nonflaky_indented.csv',
+    label_column='label'
+)
+
+metrics = evaluator.run(
+    output_dir='output/evaluation',
+    save_report=True,
+    detailed=True
+)
+```
+
+**评估指标:**
+- 总体准确率 (Overall Accuracy)
+- Flaky检测指标：准确率、精确率、召回率、F1分数
+- 类别分类准确率
+- 各类别详细指标（Async, Conc, Time, UC, OD, Non-Flaky）
+
 ## 🎯 使用场景
 
 ### 场景1: 快速测试
@@ -252,6 +432,23 @@ agent = DistillationAgent(
     checkpoint_interval=50
 )
 result = agent.run()
+```
+
+### 场景5: 评估模型性能
+
+```python
+# 评估预测结果
+from evaluation import Evaluator
+
+evaluator = Evaluator(
+    prediction_file='output/predictions.json',
+    ground_truth_file='dataset/labels.csv',
+    label_column='label'
+)
+
+metrics = evaluator.run(output_dir='output/evaluation')
+print(f"总体准确率: {metrics['overall_accuracy']:.2%}")
+print(f"Flaky F1: {metrics['flaky_detection']['f1']:.2%}")
 ```
 
 ## 📝 Prompt管理
