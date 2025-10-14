@@ -20,7 +20,7 @@ def load_csv(file_path: Union[str, Path], encoding: str = 'utf-8') -> pd.DataFra
         DataFrame对象
     """
     try:
-        df = pd.read_csv(file_path, encoding=encoding)
+        df = pd.read_csv(f"dataset/{file_path}", encoding=encoding)
         print(f"✓ 成功加载数据集: {len(df)} 条记录")
         print(f"  列名: {df.columns.tolist()}")
         return df
