@@ -3,9 +3,30 @@
 """
 import pandas as pd
 import json
+import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 import random
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """自定义JSON编码器，处理numpy和pandas数据类型"""
+    def default(self, obj):
+        if isinstance(obj, (np.integer, np.int64)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, pd.Series):
+            return obj.to_dict()
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict('records')
+        elif hasattr(obj, 'item'):  # 处理pandas的特殊类型
+            return obj.item()
+        elif hasattr(obj, '__dict__'):  # 处理自定义对象
+            return str(obj)
+        return super().default(obj)
 
 
 def load_csv(file_path: Union[str, Path], encoding: str = 'utf-8') -> pd.DataFrame:
@@ -90,7 +111,7 @@ def save_json(data: Union[List, Dict],
               encoding: str = 'utf-8',
               indent: int = 2) -> None:
     """
-    保存JSON文件
+    保存JSON文件（自动处理numpy和pandas数据类型）
     
     Args:
         data: 要保存的数据
@@ -98,9 +119,39 @@ def save_json(data: Union[List, Dict],
         encoding: 文件编码
         indent: 缩进空格数
     """
+    def convert_to_serializable(obj):
+        """递归转换不可序列化的对象"""
+        if isinstance(obj, dict):
+            return {k: convert_to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_to_serializable(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.int64)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, pd.Series):
+            return obj.to_dict()
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict('records')
+        elif hasattr(obj, 'item'):  # 处理pandas的特殊类型（如Int64DType）
+            try:
+                return obj.item()
+            except:
+                return str(obj)
+        elif pd.isna(obj):  # 处理NaN
+            return None
+        elif hasattr(obj, '__dict__') and not isinstance(obj, (str, int, float, bool, type(None))):
+            return str(obj)
+        return obj
+    
     try:
+        # 预处理数据，转换所有不可序列化的对象
+        serializable_data = convert_to_serializable(data)
+        
         with open(file_path, 'w', encoding=encoding) as f:
-            json.dump(data, f, ensure_ascii=False, indent=indent)
+            json.dump(serializable_data, f, ensure_ascii=False, indent=indent, cls=NumpyEncoder)
         print(f"✓ 数据已保存到: {file_path}")
     except Exception as e:
         print(f"✗ 保存JSON文件失败: {e}")
@@ -131,7 +182,7 @@ def load_json(file_path: Union[str, Path],
 
 def get_data_statistics(df: pd.DataFrame) -> Dict:
     """
-    获取数据集统计信息
+    获取数据集统计信息（返回可JSON序列化的数据）
     
     Args:
         df: DataFrame对象
@@ -139,17 +190,25 @@ def get_data_statistics(df: pd.DataFrame) -> Dict:
     Returns:
         统计信息字典
     """
+    # 转换dtypes为字符串（避免不可序列化的类型）
+    dtypes_dict = {col: str(dtype) for col, dtype in df.dtypes.to_dict().items()}
+    
+    # 转换missing_values为标准Python整数
+    missing_values_dict = {col: int(count) for col, count in df.isnull().sum().to_dict().items()}
+    
     stats = {
-        "total_records": len(df),
+        "total_records": int(len(df)),
         "columns": df.columns.tolist(),
-        "dtypes": df.dtypes.to_dict(),
-        "missing_values": df.isnull().sum().to_dict(),
-        "memory_usage": df.memory_usage(deep=True).sum() / 1024 / 1024  # MB
+        "dtypes": dtypes_dict,
+        "missing_values": missing_values_dict,
+        "memory_usage": float(df.memory_usage(deep=True).sum() / 1024 / 1024)  # MB
     }
     
     # 如果有label列，统计标签分布
     if 'label' in df.columns:
-        stats['label_distribution'] = df['label'].value_counts().to_dict()
+        label_counts = df['label'].value_counts().to_dict()
+        # 转换为标准Python类型
+        stats['label_distribution'] = {str(k): int(v) for k, v in label_counts.items()}
     
     return stats
 
