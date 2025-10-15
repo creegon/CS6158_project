@@ -1,0 +1,37 @@
+# Python 依赖包
+# 用于 Flaky Test 分析系统
+
+# OpenAI API (用于调用 DeepSeek 等 LLM)
+openai>=1.0.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 进度条
+tqdm>=4.65.0
+
+# JSON 处理
+# json 是 Python 标准库，无需安装
+
+# 路径处理
+# pathlib 是 Python 标准库，无需安装
+
+# 类型提示
+# typing 是 Python 标准库，无需安装
+
+# 正则表达式
+# re 是 Python 标准库，无需安装
+
+# 时间处理
+# time 是 Python 标准库，无需安装
+
+# 系统操作
+# sys 是 Python 标准库，无需安装
+# os 是 Python 标准库，无需安装
+
+# 抽象基类
+# abc 是 Python 标准库，无需安装
+
+# 随机数
+# random 是 Python 标准库，无需安装
