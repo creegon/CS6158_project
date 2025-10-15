@@ -115,6 +115,9 @@ def calculate_metrics(predictions: Dict, ground_truths: Dict) -> Dict:
         'fn': 0,  # 假负例：预测Non-Flaky，实际Flaky
     }
     
+    # 收集错误案例
+    error_cases = []
+    
     # 遍历所有样本
     for test_id in ground_truths:
         if test_id not in predictions:
@@ -139,6 +142,15 @@ def calculate_metrics(predictions: Dict, ground_truths: Dict) -> Dict:
         # 都正确
         if pred_flaky == true_flaky and pred_category == true_category:
             correct_both += 1
+        else:
+            # 记录错误案例
+            error_cases.append({
+                'id': test_id,
+                'predicted': f"{pred_flaky} - {pred_category}",
+                'actual': f"{true_flaky} - {true_category}",
+                'error_type': 'both' if (pred_flaky != true_flaky and pred_category != true_category) 
+                             else ('flaky' if pred_flaky != true_flaky else 'category')
+            })
         
         # Flaky混淆矩阵
         pred_is_flaky = (pred_flaky == '是')
@@ -212,7 +224,8 @@ def calculate_metrics(predictions: Dict, ground_truths: Dict) -> Dict:
         'category_classification': {
             'accuracy': category_acc,
             'per_category': category_metrics
-        }
+        },
+        'error_cases': error_cases  # 添加错误案例
     }
 
 

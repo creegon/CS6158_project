@@ -44,6 +44,7 @@ env/
 # Output
 output/*.json
 output/*.txt
+output/splits
 output/evaluation/
 temp_checkpoint.json
 distillation_dataset_temp.json

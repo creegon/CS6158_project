@@ -34,22 +34,23 @@ def load_predictions_from_alpaca(json_file: Union[str, Path]) -> Dict[int, Tuple
             print(f"⚠ 警告: 第 {i+1} 条记录无法提取答案")
             continue
         
-        # 使用索引作为ID
-        predictions[i] = (is_flaky, category)
+        # 优先使用 id 字段，如果没有则使用索引
+        test_id = item.get('id', i)
+        predictions[test_id] = (is_flaky, category)
     
     return predictions
 
 
 def load_ground_truth_from_csv(csv_file: Union[str, Path], 
                                 label_column: str = 'label',
-                                id_column: str = None) -> Dict[int, Tuple[str, str]]:
+                                id_column: str = 'id') -> Dict[int, Tuple[str, str]]:
     """
     从CSV文件加载真实标签
     
     Args:
         csv_file: CSV文件路径
         label_column: 标签列名
-        id_column: ID列名（可选）
+        id_column: ID列名（默认为'id'）
         
     Returns:
         字典 {test_id: (is_flaky, category)}
@@ -70,7 +71,7 @@ def load_ground_truth_from_csv(csv_file: Union[str, Path],
             # 标准化类别
             category = normalize_category(label)
         
-        # 使用指定的ID列或索引
+        # 优先使用 id 列，如果没有则使用索引
         test_id = int(row[id_column]) if id_column and id_column in df.columns else idx
         ground_truths[test_id] = (is_flaky, category)
     

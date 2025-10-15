@@ -23,15 +23,15 @@ class Evaluator:
                  prediction_file: Union[str, Path],
                  ground_truth_file: Union[str, Path],
                  label_column: str = 'label',
-                 id_column: Optional[str] = None):
+                 id_column: str = 'id'):
         """
         初始化评估器
         
         Args:
-            prediction_file: Alpaca格式的预测结果JSON文件
+            prediction_file: Alpaca格式的预测结果JSON文件（应包含id字段）
             ground_truth_file: 真实标签CSV文件
             label_column: CSV中的标签列名
-            id_column: CSV中的ID列名（可选）
+            id_column: CSV中的ID列名（默认为'id'）
         """
         self.prediction_file = Path(prediction_file)
         self.ground_truth_file = Path(ground_truth_file)

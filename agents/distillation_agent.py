@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Optional, Union, List, Dict
 from tqdm import tqdm
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from agents.base_agent import BaseAgent
 from utils import (
@@ -42,6 +44,7 @@ class DistillationAgent(BaseAgent):
                  batch_size: Optional[int] = None,
                  batch_delay: Optional[float] = None,
                  checkpoint_interval: Optional[int] = None,
+                 parallel_workers: int = 1,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -56,6 +59,7 @@ class DistillationAgent(BaseAgent):
             batch_size: 批次大小
             batch_delay: 批次延迟（秒）
             checkpoint_interval: 检查点保存间隔
+            parallel_workers: 并行推理的工作线程数，1表示串行处理
             **kwargs: 传递给BaseAgent的其他参数
         """
         super().__init__(**kwargs)
@@ -72,6 +76,7 @@ class DistillationAgent(BaseAgent):
         self.batch_size = batch_size or API_BATCH_SIZE
         self.batch_delay = batch_delay if batch_delay is not None else API_BATCH_DELAY
         self.checkpoint_interval = checkpoint_interval or CHECKPOINT_INTERVAL
+        self.parallel_workers = max(1, parallel_workers)  # 确保至少为1
         
         # 加载prompt模板
         self.system_prompt = load_prompt('distillation_system')
@@ -80,6 +85,9 @@ class DistillationAgent(BaseAgent):
         # 存储结果
         self.distilled_dataset: List[Dict] = []
         self.failed_indices: List[int] = []
+        
+        # 线程安全锁
+        self._lock = threading.Lock()
     
     def get_default_system_prompt(self) -> str:
         """获取默认系统提示词"""
@@ -95,16 +103,25 @@ class DistillationAgent(BaseAgent):
         Returns:
             格式化的用户提示词
         """
-        test_code = row.get(self.code_column, row.get('full_code', ''))
-        return format_prompt(self.user_template, test_code=test_code)
+        full_code = row.get(self.code_column, row.get('full_code', ''))
+        project = row.get('project', 'Unknown')
+        test_name = row.get('test_name', 'Unknown')
+        
+        return format_prompt(
+            self.user_template, 
+            project=project,
+            test_name=test_name,
+            full_code=full_code
+        )
     
-    def process_single_row(self, idx: int, row: pd.Series) -> Optional[Dict]:
+    def process_single_row(self, idx: int, row: pd.Series, include_id: bool = False) -> Optional[Dict]:
         """
         处理单条数据
         
         Args:
             idx: 数据索引
             row: 数据行
+            include_id: 是否包含ID字段
             
         Returns:
             Alpaca格式的数据，失败返回None
@@ -116,13 +133,35 @@ class DistillationAgent(BaseAgent):
         reasoning = self.call_api(user_prompt)
         
         if reasoning is None:
-            print(f"\n⚠ 第 {idx} 条数据处理失败")
-            self.failed_indices.append(idx)
+            with self._lock:
+                print(f"\n⚠ 第 {idx} 条数据处理失败")
+                self.failed_indices.append(idx)
             return None
         
-        # 转换为Alpaca格式
-        alpaca_item = convert_to_alpaca_format(row, reasoning, self.code_column)
+        # 转换为Alpaca格式，传入 system_prompt 和 user_template
+        alpaca_item = convert_to_alpaca_format(
+            row, 
+            reasoning, 
+            self.code_column, 
+            include_id=include_id,
+            system_prompt=self.system_prompt,
+            user_template=self.user_template
+        )
         return alpaca_item
+    
+    def process_single_row_with_index(self, task: tuple) -> tuple:
+        """
+        处理单条数据（带索引，用于并行处理）
+        
+        Args:
+            task: (idx, row) 元组
+            
+        Returns:
+            (idx, alpaca_item) 元组
+        """
+        idx, row = task
+        alpaca_item = self.process_single_row(idx, row)
+        return (idx, alpaca_item)
     
     def save_checkpoint(self, checkpoint_name: str = 'checkpoint') -> None:
         """
@@ -163,6 +202,7 @@ class DistillationAgent(BaseAgent):
             df = sample_data(df, mode=self.test_mode, n=self.test_size, random_seed=self.random_seed)
         
         print(f"\n🚀 开始处理 {len(df)} 条数据...")
+        print(f"   并行线程数: {self.parallel_workers}")
         print(f"   批次大小: {self.batch_size}")
         print(f"   批次延迟: {self.batch_delay}秒")
         print(f"   检查点间隔: {self.checkpoint_interval}条")
@@ -176,26 +216,32 @@ class DistillationAgent(BaseAgent):
         # 处理数据
         start_time = time.time()
         
-        for idx, row in tqdm(df.iterrows(), total=len(df), desc="处理进度"):
-            alpaca_item = self.process_single_row(idx, row)
-            
-            if alpaca_item:
-                self.distilled_dataset.append(alpaca_item)
-            
-            # 批次延迟
-            if (idx + 1) % self.batch_size == 0:
-                time.sleep(self.batch_delay)
-            
-            # 保存检查点
-            if (idx + 1) % self.checkpoint_interval == 0:
-                self.save_checkpoint('temp_checkpoint')
-                print(f"\n✓ 已处理 {idx + 1} 条，检查点已保存")
+        if self.parallel_workers == 1:
+            # 串行处理
+            self._run_serial(df)
+        else:
+            # 并行处理
+            self._run_parallel(df)
         
         elapsed_time = time.time() - start_time
         
-        # 保存最终结果
+        # 保存两个版本的结果
+        # 1. 标准 Alpaca 格式（用于训练）
         output_file = self.output_dir / f"{output_name}.json"
         save_json(self.distilled_dataset, output_file)
+        
+        # 2. 带 ID 的版本（用于评估）
+        output_file_with_id = self.output_dir / f"{output_name}_with_id.json"
+        dataset_with_id = []
+        for item in self.distilled_dataset:
+            # 重新处理以添加 ID
+            idx = self.distilled_dataset.index(item)
+            row = df.iloc[idx]
+            if 'id' in row:
+                item_with_id = item.copy()
+                item_with_id['id'] = int(row['id'])
+                dataset_with_id.append(item_with_id)
+        save_json(dataset_with_id, output_file_with_id)
         
         # 打印统计信息
         print("\n" + "=" * 60)
@@ -204,7 +250,9 @@ class DistillationAgent(BaseAgent):
         print(f"✓ 成功: {len(self.distilled_dataset)} 条")
         print(f"✗ 失败: {len(self.failed_indices)} 条")
         print(f"⏱ 耗时: {elapsed_time:.2f} 秒")
-        print(f"📁 输出文件: {output_file}")
+        print(f"⚡ 平均速度: {len(df) / elapsed_time:.2f} 条/秒")
+        print(f"📁 标准输出: {output_file}")
+        print(f"📁 带ID输出: {output_file_with_id}")
         print("=" * 60)
         
         # 打印API统计
@@ -224,5 +272,78 @@ class DistillationAgent(BaseAgent):
             "failed_indices": self.failed_indices,
             "elapsed_time": elapsed_time,
             "output_file": str(output_file),
+            "output_file_with_id": str(output_file_with_id),
             "api_stats": self.get_stats()
         }
+    
+    def _run_serial(self, df: pd.DataFrame) -> None:
+        """
+        串行处理数据
+        
+        Args:
+            df: 要处理的数据框
+        """
+        for idx, row in tqdm(df.iterrows(), total=len(df), desc="处理进度"):
+            alpaca_item = self.process_single_row(idx, row)
+            
+            if alpaca_item:
+                self.distilled_dataset.append(alpaca_item)
+            
+            # 批次延迟
+            if (idx + 1) % self.batch_size == 0:
+                time.sleep(self.batch_delay)
+            
+            # 保存检查点
+            if (idx + 1) % self.checkpoint_interval == 0:
+                self.save_checkpoint('temp_checkpoint')
+                print(f"\n✓ 已处理 {idx + 1} 条，检查点已保存")
+    
+    def _run_parallel(self, df: pd.DataFrame) -> None:
+        """
+        并行处理数据
+        
+        Args:
+            df: 要处理的数据框
+        """
+        # 准备任务列表
+        tasks = [(idx, row) for idx, row in df.iterrows()]
+        results = {}  # 存储结果，保持原始顺序
+        processed_count = 0
+        
+        # 使用线程池并行处理
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            # 提交所有任务
+            future_to_task = {
+                executor.submit(self.process_single_row_with_index, task): task[0] 
+                for task in tasks
+            }
+            
+            # 使用进度条
+            with tqdm(total=len(tasks), desc="处理进度") as pbar:
+                for future in as_completed(future_to_task):
+                    idx, alpaca_item = future.result()
+                    results[idx] = alpaca_item
+                    processed_count += 1
+                    pbar.update(1)
+                    
+                    # 批次延迟（每处理一批后暂停）
+                    if processed_count % self.batch_size == 0:
+                        time.sleep(self.batch_delay)
+                    
+                    # 保存检查点
+                    if processed_count % self.checkpoint_interval == 0:
+                        # 按索引顺序整理当前结果
+                        sorted_results = [
+                            results[i] for i in sorted(results.keys()) 
+                            if results[i] is not None
+                        ]
+                        with self._lock:
+                            self.distilled_dataset = sorted_results
+                            self.save_checkpoint('temp_checkpoint')
+                        print(f"\n✓ 已处理 {processed_count} 条，检查点已保存")
+        
+        # 按原始索引顺序整理最终结果
+        self.distilled_dataset = [
+            results[idx] for idx in sorted(results.keys()) 
+            if results[idx] is not None
+        ]

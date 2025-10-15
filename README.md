@@ -1,6 +1,15 @@
 # Flaky Test分析系统
 
-这是一个模块化的Flaky Test分析系统，支持数据蒸馏、数据讲解和多Agent协作等功能。
+这是一个模块化的Flaky Test分析系统，支持数据蒸馏、数据讲解、并行推理和精确评估等功能。
+
+## ✨ 核心特性
+
+- 🎯 **精确评估**：通过 ID 字段匹配预测结果和真实标签，避免顺序混乱
+- 🚀 **并行推理**：支持多线程并行处理，显著提升数据蒸馏效率
+- 📊 **双格式输出**：同时生成训练用和评估用的数据集
+- 🔄 **完整流程**：从数据蒸馏到模型评估的端到端解决方案
+
+📖 **详细评估流程说明**：请查看 [EVALUATION_WORKFLOW.md](EVALUATION_WORKFLOW.md)
 
 ## 目录
 
@@ -350,47 +359,6 @@ output/evaluation/
 2. **数据对齐**: 预测结果和真实标签的数量可能不同，系统会自动对齐
 3. **标签标准化**: 不同的标签写法会自动标准化
 4. **缺失答案**: 如果某条预测无法提取答案，会显示警告并跳过
-
-## 🎯 使用场景
-````
-```
-
-### 4. Evaluation模块 (`evaluation/`)
-
-评估模块用于评估Flaky Test分类模型的性能。
-
-#### Evaluator (`evaluator.py`)
-
-评估器主类，整合所有评估功能。
-
-**主要功能:**
-- 加载Alpaca格式的预测结果
-- 加载CSV格式的真实标签
-- 计算各项评估指标
-- 生成详细的评估报告
-
-**使用示例:**
-```python
-from evaluation import Evaluator
-
-evaluator = Evaluator(
-    prediction_file='output/distillation_test_random.json',
-    ground_truth_file='dataset/FlakyLens_dataset_with_nonflaky_indented.csv',
-    label_column='label'
-)
-
-metrics = evaluator.run(
-    output_dir='output/evaluation',
-    save_report=True,
-    detailed=True
-)
-```
-
-**评估指标:**
-- 总体准确率 (Overall Accuracy)
-- Flaky检测指标：准确率、精确率、召回率、F1分数
-- 类别分类准确率
-- 各类别详细指标（Async, Conc, Time, UC, OD, Non-Flaky）
 
 ## 🎯 使用场景
 
