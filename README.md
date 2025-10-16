@@ -6,10 +6,8 @@
 
 - 🎯 **精确评估**：通过 ID 字段匹配预测结果和真实标签，避免顺序混乱
 - 🚀 **并行推理**：支持多线程并行处理，显著提升数据蒸馏效率
-- 📊 **双格式输出**：同时生成训练用和评估用的数据集
+- 📊 **5类Flaky分类**：Async、Conc、Time、UC、OD 五种类型精准识别
 - 🔄 **完整流程**：从数据蒸馏到模型评估的端到端解决方案
-
-📖 **详细评估流程说明**：请查看 [EVALUATION_WORKFLOW.md](EVALUATION_WORKFLOW.md)
 
 ## 目录
 
@@ -83,43 +81,19 @@ pip install pandas openai tqdm
 
 **重要：为了安全，API密钥存储在`.env`文件中**
 
-```bash
-# 1. 复制示例配置文件
-copy .env.example .env
-
-# 2. 编辑.env文件，填入你的API密钥
-# DEEPSEEK_API_KEY=your-api-key-here
-```
-
-详细配置说明请查看 [API_KEY_SETUP.md](API_KEY_SETUP.md)
+① 复制示例配置文件：copy .env.example .env
+② 编辑.env文件，填入你的API密钥：DEEPSEEK_API_KEY=your-api-key-here
 
 ⚠️ **注意**: `.env`文件已添加到`.gitignore`，不会被提交到Git仓库
 
 ### 3. 运行示例
 
-#### 数据蒸馏（推荐先用测试模式）
+**推荐使用交互式界面：** 
+运行 `python main.py` 选择相应功能即可
 
-```python
-from agents import DistillationAgent
-
-# 创建Agent（测试模式，只处理最后10条）
-agent = DistillationAgent(test_mode='last', test_size=10)
-
-# 运行蒸馏任务
-result = agent.run(output_name='test_distillation')
-```
-
-#### 数据讲解
-
-```python
-from agents import DataExplainerAgent
-
-# 创建Agent
-agent = DataExplainerAgent(sample_size=20)
-
-# 运行分析任务
-result = agent.run(output_name='dataset_analysis')
-```
+**或直接使用代码：**
+- 数据蒸馏（测试模式）：from agents import DistillationAgent; agent = DistillationAgent(test_mode='last', test_size=10); agent.run()
+- 数据分析：from agents import DataExplainerAgent; agent = DataExplainerAgent(sample_size=20); agent.run()
 
 ## 📚 核心模块说明
 
@@ -247,67 +221,27 @@ results = coordinator.execute(tasks)
 #### 答案格式要求
 
 模型输出必须在开头包含标准化的答案格式：
+- 答案：是 - Async （表示是Flaky Test，类型为异步）
+- 答案：否 - Non-Flaky （表示不是Flaky Test）
 
-```
-答案：是 - Async
-答案：是 - Conc  
-答案：否 - Non-Flaky
-```
-
-格式说明：
-- `答案：` - 固定前缀
-- `是/否` - 表示是否为Flaky Test
-- `-` - 分隔符
-- `类型` - Async, Conc, Time, UC, OD, 或 Non-Flaky
+格式说明：固定前缀"答案："+ 是/否 + 分隔符"-" + 类型（Async/Conc/Time/UC/OD/Non-Flaky）
 
 #### 基本使用
 
-```python
+使用评估器非常简单：
 from evaluation import Evaluator
-
-# 创建评估器
-evaluator = Evaluator(
-    prediction_file='output/predictions.json',  # Alpaca格式
-    ground_truth_file='dataset/labels.csv',      # 真实标签
-    label_column='label'
-)
-
-# 运行评估并保存报告
-metrics = evaluator.run(
+evaluator = Evaluator(prediction_file='output/predictions.json', ground_truth_file='dataset/labels.csv', label_column='label')
+metrics = evaluator.run(output_dir='output/evaluation', save_report=True)
     output_dir='output/evaluation',
     save_report=True,
     detailed=True
 )
-```
 
 #### 文件格式要求
 
-**预测结果文件 (JSON - Alpaca格式):**
-```json
-[
-  {
-    "instruction": "请分析以下测试用例...",
-    "input": "测试代码：\n...",
-    "output": "答案：是 - Async\n\n详细分析..."
-  }
-]
-```
+**预测结果文件 (Alpaca格式JSON)：** 包含 instruction、input、output 字段，output中需要有"答案："格式
 
-**真实标签文件 (CSV):**
-```csv
-id,label,...
-0,async wait,...
-1,concurrency,...
-2,non-flaky,...
-```
-
-支持的标签值会自动标准化：
-- `async wait`, `async`, `Async` → Async
-- `concurrency`, `conc`, `Conc` → Conc
-- `time`, `Time` → Time
-- `unordered collections`, `uc`, `UC` → UC
-- `test order dependency`, `od`, `OD` → OD
-- `non-flaky`, `nonflaky`, `Non-Flaky` → Non-Flaky
+**真实标签文件 (CSV)：** 包含 id 和 label 列，标签值会自动标准化（如 "async wait" → "Async"）
 
 #### 评估指标
 
@@ -317,31 +251,10 @@ id,label,...
 
 #### 高级用法
 
-```python
-# 分步骤执行
-evaluator = Evaluator(
-    prediction_file='output/predictions.json',
-    ground_truth_file='dataset/labels.csv',
-    label_column='label',
-    id_column='id'  # 可选：指定ID列
-)
+分步执行：evaluator.load_data() → evaluator.evaluate() → evaluator.print_report() → evaluator.save_report()
 
-evaluator.load_data()
-evaluator.evaluate()
-evaluator.print_report(detailed=True)
-evaluator.save_report('output/evaluation', 'my_report')
-
-# 评估多个模型
-models = {
-    'model_v1': 'output/model_v1_predictions.json',
-    'model_v2': 'output/model_v2_predictions.json',
-}
-
-for name, pred_file in models.items():
-    evaluator = Evaluator(pred_file, 'dataset/labels.csv', label_column='label')
-    metrics = evaluator.run(output_dir=f'output/evaluation/{name}')
+批量评估多个模型：循环遍历模型列表，分别创建Evaluator并运行评估
     print(f"{name}: Accuracy={metrics['overall_accuracy']:.2%}")
-```
 
 #### 输出文件
 
@@ -380,44 +293,15 @@ result = agent.run(output_name='full_dataset')
 
 ### 场景3: 数据集分析
 
-```python
-# 分析数据集特征
-agent = DataExplainerAgent(sample_size=30)
-result = agent.run()
-```
+使用 DataExplainerAgent 分析数据集，采样30条数据生成分析报告
 
 ### 场景4: 自定义参数
 
-```python
-# 自定义各种参数
-agent = DistillationAgent(
-    test_mode='random',
-    test_size=100,
-    temperature=0.8,
-    max_tokens=2000,
-    batch_size=10,
-    batch_delay=1,
-    checkpoint_interval=50
-)
-result = agent.run()
-```
+可自定义 test_mode、test_size、temperature、max_tokens、batch_size、batch_delay、checkpoint_interval 等参数
 
 ### 场景5: 评估模型性能
 
-```python
-# 评估预测结果
-from evaluation import Evaluator
-
-evaluator = Evaluator(
-    prediction_file='output/predictions.json',
-    ground_truth_file='dataset/labels.csv',
-    label_column='label'
-)
-
-metrics = evaluator.run(output_dir='output/evaluation')
-print(f"总体准确率: {metrics['overall_accuracy']:.2%}")
-print(f"Flaky F1: {metrics['flaky_detection']['f1']:.2%}")
-```
+使用 Evaluator 评估预测结果，查看总体准确率和Flaky检测F1分数
 
 ## 📝 Prompt管理
 
@@ -529,30 +413,17 @@ ls output/
 
 ### 添加新的Agent
 
-1. 创建新文件 `agents/your_agent.py`
-2. 继承 `BaseAgent`
-3. 实现 `get_default_system_prompt()` 和 `run()` 方法
-4. 在 `agents/__init__.py` 中导出
-
-```python
-from agents.base_agent import BaseAgent
-
-class YourAgent(BaseAgent):
-    def get_default_system_prompt(self):
-        return "你的系统提示词"
-    
-    def run(self, **kwargs):
-        # 实现你的逻辑
-        pass
-```
+① 创建 agents/your_agent.py 继承 BaseAgent
+② 实现 get_default_system_prompt() 和 run() 方法
+③ 在 agents/__init__.py 中导出
 
 ### 添加新的Prompt模板
 
-直接在 `prompts/` 目录下创建 `.txt` 文件，然后用 `load_prompt()` 加载。
+直接在 prompts/ 目录下创建 .txt 文件，用 load_prompt() 加载即可
 
 ### 修改配置
 
-编辑 `config/config.py` 或 `.env` 文件即可。
+编辑 config/config.py 或 .env 文件
 
 ---
 
@@ -614,11 +485,9 @@ class YourAgent(BaseAgent):
 
 ## 📦 依赖
 
-```bash
-pip install pandas openai tqdm
-```
-
-**Python版本要求：** 3.8+
+核心依赖：pandas、openai、tqdm
+安装命令：pip install pandas openai tqdm
+Python版本要求：3.8+
 
 ---
 

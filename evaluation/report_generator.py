@@ -163,9 +163,8 @@ class EvaluationReport:
         Args:
             output_file: 输出文件路径
         """
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(self.metrics, f, ensure_ascii=False, indent=2)
-        print(f"\n✓ 评估报告已保存到: {output_file}")
+        from utils import save_json
+        save_json(self.metrics, output_file)
     
     def save_to_text(self, output_file: Path):
         """

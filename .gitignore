@@ -42,6 +42,7 @@ env/
 .ipynb_checkpoints
 
 # Output
+output
 output/*.json
 output/*.txt
 output/splits
