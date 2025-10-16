@@ -22,18 +22,66 @@ def load_env():
 # 加载环境变量
 load_env()
 
-# API配置 - 从环境变量读取，如果没有则使用默认值
+# API配置 - 支持多个提供商
+# DeepSeek配置
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
+# SiliconFlow配置
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+
+# 当前使用的提供商（可选：deepseek, siliconflow）
+CURRENT_PROVIDER = os.getenv("CURRENT_PROVIDER", "deepseek")
+
+# 根据提供商选择API配置
+def get_api_config(provider: str = None):
+    """
+    获取指定提供商的API配置
+    
+    Args:
+        provider: 提供商名称 (deepseek/siliconflow)
+        
+    Returns:
+        (api_key, base_url, default_model) 的元组
+    """
+    provider = provider or CURRENT_PROVIDER
+    
+    if provider.lower() == "deepseek":
+        return DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, "deepseek-chat"
+    elif provider.lower() == "siliconflow":
+        return SILICONFLOW_API_KEY, SILICONFLOW_BASE_URL, "Qwen/Qwen2.5-7B-Instruct"
+    else:
+        raise ValueError(f"不支持的提供商: {provider}")
+
+# 获取当前配置
+CURRENT_API_KEY, CURRENT_BASE_URL, CURRENT_MODEL = get_api_config()
+
 # 检查API密钥是否配置
-if not DEEPSEEK_API_KEY:
-    print("⚠ 警告: 未找到DEEPSEEK_API_KEY，请在.env文件中配置")
+if not CURRENT_API_KEY:
+    print(f"⚠ 警告: 未找到 {CURRENT_PROVIDER.upper()}_API_KEY，请在.env文件中配置")
     print("   提示: 复制.env.example为.env并填入你的API密钥")
 
+# 支持的模型列表
+SUPPORTED_MODELS = {
+    "deepseek": [
+        "deepseek-chat",
+        "deepseek-coder"
+    ],
+    "siliconflow": [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen2.5-14B-Instruct",
+        "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2.5-72B-Instruct",
+        "THUDM/glm-4-9b-chat",
+        "01-ai/Yi-1.5-9B-Chat-16K",
+        "deepseek-ai/DeepSeek-V2.5"
+    ]
+}
 
-# 模型配置
-DEFAULT_MODEL = "deepseek-chat"
+
+# 模型配置（向后兼容）
+DEFAULT_MODEL = CURRENT_MODEL
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_MAX_RETRIES = 3

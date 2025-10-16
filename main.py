@@ -14,7 +14,9 @@ from evaluation import Evaluator
 from utils import (load_csv, split_dataset, save_split_datasets, 
                    create_project_wise_kfold_splits, save_kfold_datasets,
                    APISignatureMatcher, save_config, load_config, 
-                   list_saved_configs, delete_config, display_config)
+                   list_saved_configs, delete_config, display_config,
+                   switch_provider, get_current_config, show_current_config,
+                   list_providers, get_supported_models, show_all_models)
 from config import DATASET_PATH, OUTPUT_DIR
 
 
@@ -102,7 +104,8 @@ def print_menu():
     print("3. 评估预测结果")
     print("4. 数据集划分")
     print("5. 配置管理")
-    print("6. 退出")
+    print("6. 模型设置")
+    print("7. 退出")
     print("=" * 60)
 
 
@@ -662,11 +665,75 @@ def run_config_manager():
             print("✗ 无效的操作")
 
 
+def run_model_settings():
+    """模型设置"""
+    print("\n" + "=" * 60)
+    print("模型设置")
+    print("=" * 60)
+    
+    # 显示当前配置
+    provider, model, base_url, api_key_status, has_key = get_current_config()
+    print(f"\n📌 当前配置:")
+    print(f"   提供商: {provider}")
+    print(f"   模型: {model}")
+    print(f"   API URL: {base_url}")
+    print(f"   API密钥: {api_key_status}")
+    
+    print("\n" + "-" * 60)
+    print("可用操作:")
+    print("  1. 切换提供商")
+    print("  2. 查看当前提供商支持的模型")
+    print("  3. 查看所有支持的模型")
+    print("  0. 返回主菜单")
+    print("-" * 60)
+    
+    choice = input("\n请选择操作: ").strip()
+    
+    if choice == '1':
+        # 切换提供商
+        providers = list_providers()
+        print("\n📋 可用提供商:")
+        for i, p in enumerate(providers, 1):
+            print(f"  {i}. {p.upper()}")
+        
+        try:
+            provider_idx = int(input(f"\n请选择提供商 (1-{len(providers)}): ").strip())
+            
+            if 1 <= provider_idx <= len(providers):
+                new_provider = providers[provider_idx - 1]
+                if switch_provider(new_provider):
+                    print("⚠️  请重启程序以使更改生效")
+            else:
+                print("✗ 无效的选择")
+        except ValueError:
+            print("✗ 请输入数字")
+    
+    elif choice == '2':
+        # 查看当前提供商支持的模型
+        models = get_supported_models()
+        print(f"\n📋 {provider.upper()} 支持的模型:")
+        
+        for i, model in enumerate(models, 1):
+            print(f"  {i}. {model}")
+        
+        print("\n💡 提示: 可以在创建Agent时通过 model 参数使用指定模型")
+        print(f"   示例: DistillationAgent(model='{models[0] if models else 'model-name'}')")
+    
+    elif choice == '3':
+        # 查看所有支持的模型
+        show_all_models()
+    
+    elif choice == '0':
+        return
+    else:
+        print("✗ 无效的操作")
+
+
 def main():
     """主函数"""
     while True:
         print_menu()
-        choice = input("\n请选择操作 (1-6): ").strip()
+        choice = input("\n请选择操作 (1-7): ").strip()
         
         if choice == '1':
             run_distillation()
@@ -679,6 +746,8 @@ def main():
         elif choice == '5':
             run_config_manager()
         elif choice == '6':
+            run_model_settings()
+        elif choice == '7':
             print("\n👋 再见!")
             break
         else:

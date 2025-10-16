@@ -19,6 +19,7 @@
 - [快速开始](#-快速开始)
 - [核心模块说明](#-核心模块说明)
 - [使用场景](#-使用场景)
+- [多模型支持](#-多模型支持)
 - [测试指南](#-测试指南)
 - [扩展指南](#-扩展指南)
 - [常见问题](#-常见问题)
@@ -83,20 +84,23 @@ CS6158 project/
 │
 ├── docs/                        # 文档目录
 │   ├── API_MATCHING.md         # API匹配详细文档
-│   └── QUICK_START_API_MATCHING.md  # API匹配快速开始
+│   ├── QUICK_START_API_MATCHING.md  # API匹配快速开始
+│   └── SILICONFLOW_GUIDE.md    # SiliconFlow使用指南（新增）
 │
 ├── output/                      # 输出目录
 │   ├── *_external.json         # 包含id和few_shot_examples的完整输出（新增）
 │   ├── *.json                  # 标准Alpaca格式输出（仅instruction/input/output）
 │   └── (其他生成文件)
 │
-├── main.py                      # 快速启动脚本（已更新：配置管理功能）
+├── main.py                      # 快速启动脚本（已更新：配置管理+模型设置）
+├── switch_provider.py           # 快速切换API提供商（新增）
+├── example_siliconflow.py       # SiliconFlow使用示例（新增）
 ├── test_api_matcher.py          # API匹配测试
 ├── test_integration.py          # 集成测试
-├── test_config_manager.py       # 配置管理测试（新增）
+├── test_config_manager.py       # 配置管理测试
 ├── example_api_matching.py      # API匹配示例
 ├── CHANGELOG_API_MATCHING.md    # API匹配更新日志
-├── CONFIG_USAGE_GUIDE.md        # 配置复用使用指南（新增）
+├── CONFIG_USAGE_GUIDE.md        # 配置复用使用指南
 ├── README.md                    # 项目文档（本文件）
 └── .gitignore                   # Git忽略文件
 ```
@@ -113,8 +117,25 @@ pip install pandas openai tqdm
 
 **重要：为了安全，API密钥存储在`.env`文件中**
 
-① 复制示例配置文件：copy .env.example .env
-② 编辑.env文件，填入你的API密钥：DEEPSEEK_API_KEY=your-api-key-here
+① 复制示例配置文件：
+```bash
+copy .env.example .env
+```
+
+② 编辑 `.env` 文件，填入你的API密钥：
+
+```bash
+# DeepSeek API配置（默认）
+DEEPSEEK_API_KEY=your-deepseek-api-key-here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# SiliconFlow API配置（可选）
+SILICONFLOW_API_KEY=your-siliconflow-api-key-here
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+
+# 当前使用的提供商 (可选: deepseek, siliconflow)
+CURRENT_PROVIDER=deepseek
+```
 
 ⚠️ **注意**: `.env`文件已添加到`.gitignore`，不会被提交到Git仓库
 
@@ -444,6 +465,108 @@ for fold in range(1, 6):
 # - api_top5 (API匹配, K=5)
 # 快速切换不同配置进行对比实验
 ```
+
+---
+
+## 🤖 多模型支持
+
+系统支持多个 API 提供商，可以灵活切换。
+
+### 支持的提供商
+
+#### 1. DeepSeek（默认）
+- **模型**: `deepseek-chat`, `deepseek-coder`
+- **特点**: 快速、成本低、质量高
+- **适用**: 生产环境、大规模处理
+
+#### 2. SiliconFlow
+- **模型**: Qwen 系列、GLM、Yi 等
+- **特点**: 模型选择多、开源友好
+- **适用**: 实验对比、多模型测试
+
+### 快速切换
+
+**方式1: 使用切换工具（推荐）**
+```bash
+# 切换到 SiliconFlow
+python switch_provider.py siliconflow
+
+# 切换到 DeepSeek
+python switch_provider.py deepseek
+
+# 查看当前配置
+python switch_provider.py status
+```
+
+**方式2: 通过主菜单**
+```bash
+python main.py
+# 选择 "6. 模型设置"
+# 选择 "1. 切换提供商"
+```
+
+**方式3: 编程方式**
+```python
+from agents import DistillationAgent
+
+# 显式指定提供商
+agent = DistillationAgent(
+    provider='siliconflow',
+    model='Qwen/Qwen2.5-7B-Instruct',
+    test_mode='last',
+    test_size=10
+)
+result = agent.run()
+```
+
+### SiliconFlow 支持的模型
+
+```python
+# Qwen 系列（推荐）
+'Qwen/Qwen2.5-7B-Instruct'      # 默认，性能均衡
+'Qwen/Qwen2.5-14B-Instruct'     # 中等规模，效果更好
+'Qwen/Qwen2.5-32B-Instruct'     # 大规模模型
+'Qwen/Qwen2.5-72B-Instruct'     # 最强模型
+
+# 其他模型
+'THUDM/glm-4-9b-chat'           # ChatGLM4
+'01-ai/Yi-1.5-9B-Chat-16K'      # Yi 模型
+'deepseek-ai/DeepSeek-V2.5'     # DeepSeek（通过 SiliconFlow）
+```
+
+### 使用示例
+
+```python
+# 示例1: 使用 SiliconFlow 的 Qwen 模型
+agent = DistillationAgent(
+    provider='siliconflow',
+    model='Qwen/Qwen2.5-14B-Instruct',
+    test_mode='all',
+    parallel_workers=5
+)
+result = agent.run(output_name='qwen_result')
+
+# 示例2: 对比不同提供商
+providers = [
+    ('deepseek', 'deepseek-chat'),
+    ('siliconflow', 'Qwen/Qwen2.5-7B-Instruct')
+]
+
+for provider, model in providers:
+    agent = DistillationAgent(
+        provider=provider,
+        model=model,
+        test_mode='first',
+        test_size=10
+    )
+    result = agent.run(output_name=f'{provider}_test')
+    agent.print_stats()
+```
+
+### 详细文档
+
+- **SiliconFlow 使用指南**: [docs/SILICONFLOW_GUIDE.md](docs/SILICONFLOW_GUIDE.md)
+- **完整示例**: `python example_siliconflow.py`
 
 ## 📝 Prompt管理
 

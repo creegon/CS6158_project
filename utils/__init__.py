@@ -41,6 +41,17 @@ from .config_manager import (
     display_config
 )
 
+# 提供商管理
+from .provider_manager import (
+    switch_provider,
+    get_current_config,
+    show_current_config,
+    list_providers,
+    get_supported_models,
+    validate_provider_config,
+    show_all_models
+)
+
 __all__ = [
     # data module
     'load_csv',
@@ -67,4 +78,12 @@ __all__ = [
     'list_saved_configs',
     'delete_config',
     'display_config',
+    # provider_manager
+    'switch_provider',
+    'get_current_config',
+    'show_current_config',
+    'list_providers',
+    'get_supported_models',
+    'validate_provider_config',
+    'show_all_models',
 ]
