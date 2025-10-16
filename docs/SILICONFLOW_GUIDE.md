@@ -46,18 +46,53 @@ CURRENT_PROVIDER=siliconflow
 
 ## 🤖 支持的模型
 
-SiliconFlow 提供以下模型：
+SiliconFlow 提供丰富的开源模型选择：
 
-### Qwen 系列（推荐）
-- `Qwen/Qwen2.5-7B-Instruct` - 默认模型，性能均衡
+### Qwen 系列（推荐用于代码分析）
+- `Qwen/Qwen2.5-7B-Instruct` - 默认模型，性能均衡 ⭐
 - `Qwen/Qwen2.5-14B-Instruct` - 中等规模，效果更好
 - `Qwen/Qwen2.5-32B-Instruct` - 大规模模型
 - `Qwen/Qwen2.5-72B-Instruct` - 最强模型
+- `Qwen/Qwen2.5-Coder-7B-Instruct` - 代码专用模型 ⭐
+- `Qwen/QwQ-32B-Preview` - 推理增强模型
+- `Qwen/Qwen3-8B` - Qwen3 最新版本 🆕
 
-### 其他模型
+### ChatGLM 系列
 - `THUDM/glm-4-9b-chat` - ChatGLM4
-- `01-ai/Yi-1.5-9B-Chat-16K` - Yi 模型
-- `deepseek-ai/DeepSeek-V2.5` - DeepSeek（通过 SiliconFlow）
+- `THUDM/chatglm3-6b` - ChatGLM3
+
+### Yi 系列
+- `01-ai/Yi-1.5-9B-Chat-16K` - 长文本支持
+- `01-ai/Yi-1.5-6B-Chat` - 轻量版本
+
+### DeepSeek 系列
+- `deepseek-ai/DeepSeek-V2.5` - DeepSeek最新版
+- `deepseek-ai/DeepSeek-Coder-V2-Instruct` - 代码专用 ⭐
+
+### Llama 系列
+- `meta-llama/Meta-Llama-3.1-8B-Instruct` - 小型模型
+- `meta-llama/Meta-Llama-3.1-70B-Instruct` - 大型模型
+- `meta-llama/Meta-Llama-3.1-405B-Instruct` - 超大模型
+- `meta-llama/Llama-3.2-1B-Instruct` - 极轻量
+- `meta-llama/Llama-3.2-3B-Instruct` - 轻量版
+
+### Mistral 系列
+- `mistralai/Mistral-7B-Instruct-v0.2` - 高效模型
+- `mistralai/Mixtral-8x7B-Instruct-v0.1` - MoE架构
+
+### InternLM 系列
+- `internlm/internlm2_5-7b-chat` - 中文优化
+- `internlm/internlm2_5-20b-chat` - 大规模中文模型
+
+### 其他优质模型
+- `google/gemma-2-9b-it` - Google Gemma
+- `Qwen/Qwen2-57B-A14B-Instruct` - 稀疏激活模型
+
+**💡 推荐选择：**
+- **快速测试**：`Qwen/Qwen2.5-7B-Instruct`
+- **代码分析**：`Qwen/Qwen2.5-Coder-7B-Instruct` 或 `deepseek-ai/DeepSeek-Coder-V2-Instruct`
+- **最佳效果**：`Qwen/Qwen2.5-72B-Instruct` 或 `meta-llama/Meta-Llama-3.1-70B-Instruct`
+- **成本优先**：`Llama-3.2-3B-Instruct` 或 `Yi-1.5-6B-Chat`
 
 ## 💡 使用示例
 

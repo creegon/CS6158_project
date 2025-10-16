@@ -69,13 +69,46 @@ SUPPORTED_MODELS = {
         "deepseek-coder"
     ],
     "siliconflow": [
+        # Qwen 系列（推荐用于代码分析）
         "Qwen/Qwen2.5-7B-Instruct",
         "Qwen/Qwen2.5-14B-Instruct",
         "Qwen/Qwen2.5-32B-Instruct",
         "Qwen/Qwen2.5-72B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "Qwen/QwQ-32B-Preview",
+        "Qwen/Qwen3-8B",  # Qwen3 系列
+        
+        # ChatGLM 系列
         "THUDM/glm-4-9b-chat",
+        "THUDM/chatglm3-6b",
+        
+        # Yi 系列
         "01-ai/Yi-1.5-9B-Chat-16K",
-        "deepseek-ai/DeepSeek-V2.5"
+        "01-ai/Yi-1.5-6B-Chat",
+        
+        # DeepSeek 系列
+        "deepseek-ai/DeepSeek-V2.5",
+        "deepseek-ai/DeepSeek-Coder-V2-Instruct",
+        
+        # Llama 系列
+        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        "meta-llama/Meta-Llama-3.1-405B-Instruct",
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+        
+        # Mistral 系列
+        "mistralai/Mistral-7B-Instruct-v0.2",
+        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        
+        # InternLM 系列
+        "internlm/internlm2_5-7b-chat",
+        "internlm/internlm2_5-20b-chat",
+        
+        # 其他模型
+        "google/gemma-2-9b-it",
+        "Qwen/Qwen2-57B-A14B-Instruct",
+        "Pro/Qwen/Qwen2.5-7B-Instruct",
     ]
 }
 
