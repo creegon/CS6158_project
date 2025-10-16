@@ -664,12 +664,6 @@ python main.py
 
 **性能优化**：单次处理策略避免重复API调用，相比双次调用提升3倍速度
 
-## 🚧 待实现功能
-
-1. **ParallelCoordinator**: 并行执行多个Agent
-2. **PipelineCoordinator**: 流水线式Agent协作
-3. **更多Agent类型**: 如分类Agent、评估Agent等
-
 ---
 
 ## 📋 测试指南
@@ -781,6 +775,12 @@ ls output/
 3. **更新** `.env` 文件中的密钥
 4. **检查**Git历史，确保 `.env` 在 `.gitignore` 中
 
+### 6. 如何切换API提供商？
+**方式1：** 使用命令行工具 `python switch_provider.py [deepseek|siliconflow]`  
+**方式2：** 主菜单 → 6. 模型设置 → 1. 切换提供商  
+**方式3：** 直接编辑 `.env` 文件中的 `CURRENT_PROVIDER`  
+**注意：** 切换后需要重启程序
+
 ### 7. API匹配检索结果都是低相似度？
 **原因：** 训练集太小或测试代码差异大  
 **解决：** 
@@ -807,143 +807,6 @@ ls output/
 ### 11. 如何删除配置？
 **方式1：** 主菜单 → 5. 配置管理 → d（删除）→ 输入编号  
 **方式2：** 直接删除 `configs/` 目录下的对应JSON文件
-
----
-
-## 🔍 API签名匹配功能
-
-### 功能概述
-
-API签名匹配是一个从训练集中检索最相似测试案例作为few-shot examples的工具，用于增强LLM的Flaky Test分类能力。
-
-**核心思想：**
-- 从训练集（知识库）中检索API签名相似的历史案例
-- 将这些案例作为few-shot examples插入到LLM的Prompt中
-- 提供具体的分类参考，提升分类准确率
-
-**优势：**
-- ✅ 无需向量数据库，秒级检索
-- ✅ 基于代码结构相似度，相关性高
-- ✅ 可解释性强（显示相似度分数）
-- ✅ 易于配置和扩展
-
-### 快速使用
-
-#### 方法1: 通过main.py交互式使用
-
-```bash
-python main.py
-# 选择 "1. 数据蒸馏"
-# 选择测试集（如 fold_1_test.csv）
-# 选择是否使用API匹配 → 输入 y
-# 选择训练集（如 fold_1_train.csv）
-# 设置few-shot数量（推荐3个）
-# 配置其他参数后开始
-```
-
-#### 方法2: 编程方式
-
-```python
-from utils import load_csv, APISignatureMatcher
-from agents import DistillationAgent
-
-# 1. 加载训练集
-train_data = load_csv('dataset/kfold_splits/fold_1_train.csv')
-
-# 2. 创建API匹配器
-api_matcher = APISignatureMatcher(train_data, code_column='full_code')
-
-# 3. 创建蒸馏Agent（启用API匹配）
-agent = DistillationAgent(
-    dataset_path='dataset/kfold_splits/fold_1_test.csv',
-    test_mode='all',
-    api_matcher=api_matcher,
-    top_k_shots=3,
-    parallel_workers=5
-)
-
-# 4. 运行蒸馏
-result = agent.run(output_name='distillation_with_api')
-```
-
-### API提取规则（9类）
-
-1. **测试注解**: `@Test`, `@Before`, `@After`, `@Mock`等
-2. **方法调用**: `object.method()`
-3. **断言API**: `assertEquals`, `assertNull`, `verify`等
-4. **并发关键字**: `Thread`, `ExecutorService`, `synchronized`等
-5. **时间API**: `Thread.sleep`, `TimeUnit`, `System.currentTimeMillis`等
-6. **集合类型**: `List`, `Set`, `Map`, `ArrayList`等
-7. **I/O操作**: `InputStream`, `FileReader`, `BufferedWriter`等
-8. **Mock框架**: `Mockito`, `PowerMock`
-9. **数据库**: `Connection`, `PreparedStatement`, `ResultSet`等
-
-### Few-shot Prompt效果
-
-**不使用API匹配：**
-```
-项目: netty_netty
-测试名称: testTimeout
-代码: ...
-
-请分析这个测试是否为Flaky Test。
-```
-
-**使用API匹配（Top-3）：**
-```
-参考案例（根据API签名相似度检索）：
-============================================================
-
-【案例 1】(相似度: 0.85)
-项目: apache_hadoop
-分类: 2 (Concurrency)
-代码: ...
-
-【案例 2】(相似度: 0.72)
-项目: spring_spring-framework
-分类: 2 (Concurrency)
-代码: ...
-
-【案例 3】(相似度: 0.68)
-项目: netty_netty
-分类: 0 (Non-flaky)
-代码: ...
-
-待分析的测试代码:
-项目: netty_netty
-测试名称: testTimeout
-代码: ...
-
-请参考上述案例，分析这个测试是否为Flaky Test。
-```
-
-### 推荐配置
-
-| 参数 | 推荐值 | 说明 |
-|------|--------|------|
-| Few-shot数量 | 3 | 平衡质量和成本 |
-| 训练集规模 | 6000+ | 提供足够的知识库 |
-| 相似度阈值 | 0.1-0.2 | 过滤低质量案例 |
-| 并行线程数 | 5 | 中等规模数据处理 |
-
-### 详细文档
-
-- **快速开始**: [docs/QUICK_START_API_MATCHING.md](docs/QUICK_START_API_MATCHING.md)
-- **详细文档**: [docs/API_MATCHING.md](docs/API_MATCHING.md)
-- **更新日志**: [CHANGELOG_API_MATCHING.md](CHANGELOG_API_MATCHING.md)
-
-### 测试和示例
-
-```bash
-# 运行API匹配测试
-python test_api_matcher.py
-
-# 运行集成测试
-python test_integration.py
-
-# 查看完整示例
-python example_api_matching.py
-```
 
 ---
 
