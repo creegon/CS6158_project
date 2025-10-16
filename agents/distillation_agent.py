@@ -233,13 +233,13 @@ class DistillationAgent(BaseAgent):
         处理单条数据（带索引，用于并行处理）
         
         Args:
-            task: (idx, row) 元组
+            task: (idx, row, include_id) 元组
             
         Returns:
             (idx, alpaca_item) 元组
         """
-        idx, row = task
-        alpaca_item = self.process_single_row(idx, row)
+        idx, row, include_id = task
+        alpaca_item = self.process_single_row(idx, row, include_id=include_id)
         return (idx, alpaca_item)
     
     def save_checkpoint(self, checkpoint_name: str = 'checkpoint') -> None:
@@ -304,23 +304,31 @@ class DistillationAgent(BaseAgent):
         
         elapsed_time = time.time() - start_time
         
-        # 保存两个版本的结果
-        # 1. 标准 Alpaca 格式（用于训练）
-        output_file = self.output_dir / f"{output_name}.json"
-        save_json(self.distilled_dataset, output_file)
-        
-        # 2. 带 ID 的版本（用于评估）
-        output_file_with_id = self.output_dir / f"{output_name}_with_id.json"
-        dataset_with_id = []
-        for item in self.distilled_dataset:
-            # 重新处理以添加 ID
-            idx = self.distilled_dataset.index(item)
-            row = df.iloc[idx]
-            if 'id' in row:
-                item_with_id = item.copy()
-                item_with_id['id'] = int(row['id'])
-                dataset_with_id.append(item_with_id)
-        save_json(dataset_with_id, output_file_with_id)
+        # 保存结果
+        # 如果使用了API匹配，数据已包含id和few_shot_examples，保存为external版本
+        # 否则只保存标准版本
+        if self.api_matcher is not None:
+            # 使用API匹配时，保存为external版本（包含id和few-shot examples）
+            output_file_external = self.output_dir / f"{output_name}_external.json"
+            save_json(self.distilled_dataset, output_file_external)
+            
+            # 同时保存一个不带额外信息的标准版本（用于训练）
+            print("\n🔄 生成标准训练数据集（移除额外信息）...")
+            dataset_standard = []
+            for item in self.distilled_dataset:
+                standard_item = {
+                    'instruction': item['instruction'],
+                    'input': item['input'],
+                    'output': item['output']
+                }
+                dataset_standard.append(standard_item)
+            output_file = self.output_dir / f"{output_name}.json"
+            save_json(dataset_standard, output_file)
+        else:
+            # 未使用API匹配时，只保存标准版本
+            output_file = self.output_dir / f"{output_name}.json"
+            save_json(self.distilled_dataset, output_file)
+            output_file_external = None
         
         # 打印统计信息
         print("\n" + "=" * 60)
@@ -330,8 +338,11 @@ class DistillationAgent(BaseAgent):
         print(f"✗ 失败: {len(self.failed_indices)} 条")
         print(f"⏱ 耗时: {elapsed_time:.2f} 秒")
         print(f"⚡ 平均速度: {len(df) / elapsed_time:.2f} 条/秒")
-        print(f"📁 标准输出: {output_file}")
-        print(f"📁 带ID输出: {output_file_with_id}")
+        if self.api_matcher is not None:
+            print(f"📁 标准输出: {output_file}")
+            print(f"📁 额外信息输出: {output_file_external}")
+        else:
+            print(f"📁 输出文件: {output_file}")
         print("=" * 60)
         
         # 打印API统计
@@ -351,7 +362,7 @@ class DistillationAgent(BaseAgent):
             "failed_indices": self.failed_indices,
             "elapsed_time": elapsed_time,
             "output_file": str(output_file),
-            "output_file_with_id": str(output_file_with_id),
+            "output_file_external": str(output_file_external) if output_file_external else None,
             "api_stats": self.get_stats()
         }
     
@@ -363,7 +374,9 @@ class DistillationAgent(BaseAgent):
             df: 要处理的数据框
         """
         for idx, row in tqdm(df.iterrows(), total=len(df), desc="处理进度"):
-            alpaca_item = self.process_single_row(idx, row)
+            # 如果启用API匹配，直接生成包含额外信息的版本
+            include_id = self.api_matcher is not None
+            alpaca_item = self.process_single_row(idx, row, include_id=include_id)
             
             if alpaca_item:
                 self.distilled_dataset.append(alpaca_item)
@@ -384,8 +397,11 @@ class DistillationAgent(BaseAgent):
         Args:
             df: 要处理的数据框
         """
+        # 如果启用API匹配，直接生成包含额外信息的版本
+        include_id = self.api_matcher is not None
+        
         # 准备任务列表
-        tasks = [(idx, row) for idx, row in df.iterrows()]
+        tasks = [(idx, row, include_id) for idx, row in df.iterrows()]
         results = {}  # 存储结果，保持原始顺序
         processed_count = 0
         

@@ -299,21 +299,21 @@ def run_evaluation():
     from pathlib import Path
     output_dir = Path(__file__).parent / 'output'
     
-    # 列出output目录中的所有JSON文件（优先显示带_with_id的文件）
-    json_files = list(output_dir.glob('*_with_id.json'))
+    # 列出output目录中的所有JSON文件（优先显示带_external的文件）
+    json_files = list(output_dir.glob('*_external.json'))
     if not json_files:
-        # 如果没有带_with_id的文件，则显示所有JSON文件
+        # 如果没有带_external的文件，则显示所有JSON文件
         json_files = list(output_dir.glob('*.json'))
     
     if not json_files:
         print("\n✗ output目录中没有找到JSON文件")
-        print("提示: 请先运行数据蒸馏任务生成预测结果（建议使用带_with_id的文件进行评估）")
+        print("提示: 请先运行数据蒸馏任务生成预测结果（建议使用带_external的文件进行评估）")
         return
     
     print(f"\n找到 {len(json_files)} 个JSON文件:")
     for i, file in enumerate(json_files, 1):
-        # 标注哪些是带ID的文件
-        marker = " ✓ (推荐)" if "_with_id" in file.name else ""
+        # 标注哪些是带额外信息的文件
+        marker = " ✓ (推荐)" if "_external" in file.name else ""
         print(f"  {i}. {file.name}{marker}")
     
     try:
@@ -328,8 +328,8 @@ def run_evaluation():
         prediction_file = json_files[file_idx]
         print(f"\n选择的文件: {prediction_file.name}")
         
-        # 检查是否使用带ID的文件
-        if "_with_id" not in prediction_file.name:
+        # 检查是否使用带额外信息的文件
+        if "_external" not in prediction_file.name:
             print("⚠ 警告: 该文件不包含ID字段，评估可能不准确")
             confirm = input("是否继续？(y/n): ").strip().lower()
             if confirm != 'y':
