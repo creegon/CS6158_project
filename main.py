@@ -12,8 +12,83 @@ sys.path.insert(0, str(project_root))
 from agents import DistillationAgent, DataExplainerAgent
 from evaluation import Evaluator
 from utils import (load_csv, split_dataset, save_split_datasets, 
-                   create_project_wise_kfold_splits, save_kfold_datasets)
+                   create_project_wise_kfold_splits, save_kfold_datasets,
+                   APISignatureMatcher)
 from config import DATASET_PATH, OUTPUT_DIR
+
+
+def list_available_datasets():
+    """列出可用的数据集文件"""
+    from pathlib import Path
+    
+    dataset_dir = Path(__file__).parent / 'dataset'
+    
+    # 收集所有CSV文件
+    datasets = []
+    
+    # 1. 主数据集
+    main_dataset = dataset_dir / 'FlakyLens_dataset_with_nonflaky_indented.csv'
+    if main_dataset.exists():
+        datasets.append(('主数据集', main_dataset))
+    
+    # 2. K-fold划分
+    kfold_dir = dataset_dir / 'kfold_splits'
+    if kfold_dir.exists():
+        for fold_file in sorted(kfold_dir.glob('*.csv')):
+            fold_name = fold_file.stem.replace('_', ' ').title()
+            datasets.append((f'K-Fold: {fold_name}', fold_file))
+    
+    # 3. 其他划分
+    for csv_file in dataset_dir.glob('*.csv'):
+        if csv_file != main_dataset:
+            datasets.append((csv_file.stem, csv_file))
+    
+    return datasets
+
+
+def select_dataset(prompt="请选择数据集", allow_none=False):
+    """
+    交互式选择数据集
+    
+    Args:
+        prompt: 提示信息
+        allow_none: 是否允许不选择（返回None）
+        
+    Returns:
+        选中的数据集路径，或None
+    """
+    datasets = list_available_datasets()
+    
+    if not datasets:
+        print("✗ 未找到可用的数据集文件")
+        return None
+    
+    print(f"\n{prompt}:")
+    if allow_none:
+        print("  0. (不使用)")
+    
+    for i, (name, path) in enumerate(datasets, 1):
+        print(f"  {i}. {name}")
+    
+    try:
+        choice = input(f"\n选择 ({0 if allow_none else 1}-{len(datasets)}): ").strip()
+        if not choice:
+            return None if allow_none else datasets[0][1]
+        
+        idx = int(choice)
+        
+        if idx == 0 and allow_none:
+            return None
+        
+        if idx < 1 or idx > len(datasets):
+            print("✗ 无效的选择")
+            return None
+        
+        return datasets[idx - 1][1]
+    
+    except ValueError:
+        print("✗ 输入无效")
+        return None
 
 
 def print_menu():
@@ -30,14 +105,56 @@ def print_menu():
 
 
 def run_distillation():
-    """运行数据蒸馏（统一配置）"""
+    """运行数据蒸馏（支持自定义训练集/测试集和API匹配）"""
     print("\n" + "=" * 60)
     print("数据蒸馏配置")
     print("=" * 60)
     
     try:
-        # 选择测试模式
-        print("\n测试模式:")
+        # Step 1: 选择测试集
+        print("\n【Step 1/5】选择测试集")
+        test_dataset = select_dataset("请选择测试集")
+        if not test_dataset:
+            print("已取消")
+            return
+        print(f"✓ 测试集: {test_dataset.name}")
+        
+        # Step 2: 选择训练集（可选，用于API匹配）
+        print("\n【Step 2/5】选择训练集（用于API匹配，可选）")
+        print("提示: 如果选择训练集，将使用API签名匹配来检索few-shot examples")
+        use_api_matching = input("是否使用API匹配？(y/n, 默认n): ").strip().lower() == 'y'
+        
+        train_dataset = None
+        api_matcher = None
+        top_k_shots = 3
+        
+        if use_api_matching:
+            train_dataset = select_dataset("请选择训练集（用作知识库）", allow_none=True)
+            if train_dataset:
+                print(f"✓ 训练集: {train_dataset.name}")
+                
+                # 加载训练集并创建API匹配器
+                print("\n正在加载训练集并构建API索引...")
+                train_data = load_csv(train_dataset)
+                api_matcher = APISignatureMatcher(train_data, code_column='full_code')
+                
+                # 显示统计信息
+                stats = api_matcher.get_statistics()
+                print(f"✓ API索引构建完成:")
+                print(f"  - 训练样本数: {stats['total_train_samples']}")
+                print(f"  - 唯一API数: {stats['total_unique_apis']}")
+                print(f"  - 平均API数/样本: {stats['avg_apis_per_sample']:.1f}")
+                print(f"  - 最常见API: {', '.join([api for api, _ in stats['most_common_apis'][:5]])}")
+                
+                # 设置few-shot数量
+                top_k_shots = int(input("\n请输入few-shot样本数 (默认3): ").strip() or "3")
+                top_k_shots = max(1, min(10, top_k_shots))
+            else:
+                print("✓ 跳过API匹配")
+                use_api_matching = False
+        
+        # Step 3: 选择测试模式
+        print("\n【Step 3/5】测试模式")
         print("1. 最后N条")
         print("2. 前N条")
         print("3. 随机N条")
@@ -54,18 +171,27 @@ def run_distillation():
             test_size = None
             print("将处理全部数据")
         
-        # 输入并行线程数
+        # Step 4: 并行配置
+        print("\n【Step 4/5】并行配置")
         parallel_workers = int(input("请输入并行线程数 (1-10，默认1): ").strip() or "1")
         parallel_workers = max(1, min(10, parallel_workers))
         
-        # 批次大小
         batch_size = int(input("请输入批次大小 (默认5): ").strip() or "5")
         
-        print(f"\n配置:")
-        print(f"  模式: {mode}")
-        print(f"  数据量: {test_size if test_size else '全部'}")
-        print(f"  并行线程: {parallel_workers}")
-        print(f"  批次大小: {batch_size}")
+        # Step 5: 确认配置
+        print("\n【Step 5/5】配置确认")
+        print("=" * 60)
+        print(f"测试集: {test_dataset.name}")
+        if use_api_matching and train_dataset:
+            print(f"训练集: {train_dataset.name}")
+            print(f"API匹配: 开启 (Top-{top_k_shots} few-shots)")
+        else:
+            print("API匹配: 关闭")
+        print(f"测试模式: {mode}")
+        print(f"数据量: {test_size if test_size else '全部'}")
+        print(f"并行线程: {parallel_workers}")
+        print(f"批次大小: {batch_size}")
+        print("=" * 60)
         
         confirm = input("\n确认开始？(y/n): ").strip().lower()
         if confirm != 'y':
@@ -73,15 +199,31 @@ def run_distillation():
             return
         
         # 创建Agent并运行
+        print("\n🚀 开始数据蒸馏...")
+        
         agent = DistillationAgent(
+            dataset_path=str(test_dataset),
             test_mode=mode,
             test_size=test_size,
             batch_size=batch_size,
             batch_delay=0.5 if parallel_workers > 1 else 1,
-            parallel_workers=parallel_workers
+            parallel_workers=parallel_workers,
+            api_matcher=api_matcher,
+            top_k_shots=top_k_shots if use_api_matching else 0
         )
         
-        output_name = f'distillation_{mode}_{test_size if test_size else "all"}samples_p{parallel_workers}'
+        # 构建输出文件名
+        output_name_parts = [
+            'distillation',
+            test_dataset.stem,
+            mode,
+            f'{test_size if test_size else "all"}samples'
+        ]
+        if use_api_matching:
+            output_name_parts.append(f'api_top{top_k_shots}')
+        output_name_parts.append(f'p{parallel_workers}')
+        
+        output_name = '_'.join(output_name_parts)
         result = agent.run(output_name=output_name)
         
         print(f"\n✓ 蒸馏完成!")
@@ -89,6 +231,12 @@ def run_distillation():
         print(f"  失败: {result['failed_count']} 条")
         print(f"  耗时: {result.get('elapsed_time', 0):.2f} 秒")
         print(f"  输出: {result['output_file']}")
+        
+        if use_api_matching:
+            print(f"\n📊 API匹配统计:")
+            print(f"  - 使用训练集: {train_dataset.name}")
+            print(f"  - Few-shot数量: {top_k_shots}")
+            print(f"  - 知识库大小: {len(train_data)}")
         
     except ValueError as e:
         print(f"✗ 输入错误: {e}")

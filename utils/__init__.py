@@ -29,6 +29,9 @@ from .prompt_utils import (
     save_prompt
 )
 
+# API匹配器
+from .api_matcher import APISignatureMatcher
+
 __all__ = [
     # data module
     'load_csv',
@@ -46,5 +49,7 @@ __all__ = [
     'load_prompt',
     'format_prompt',
     'load_and_format_prompt',
-    'save_prompt'
+    'save_prompt',
+    # api_matcher
+    'APISignatureMatcher',
 ]

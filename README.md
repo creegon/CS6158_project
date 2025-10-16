@@ -8,6 +8,8 @@
 - 🚀 **并行推理**：支持多线程并行处理，显著提升数据蒸馏效率
 - 📊 **5类Flaky分类**：Async、Conc、Time、UC、OD 五种类型精准识别
 - 🔄 **完整流程**：从数据蒸馏到模型评估的端到端解决方案
+- 🔍 **API签名匹配**：基于代码结构相似度检索few-shot examples，增强LLM分类能力
+- 📂 **灵活数据管理**：支持自定义训练集/测试集，完美适配K-fold交叉验证
 
 ## 目录
 
@@ -35,7 +37,14 @@ CS6158 project/
 │
 ├── utils/                       # 工具函数
 │   ├── __init__.py
-│   ├── data_utils.py           # 数据处理工具（CSV/JSON读写、Alpaca格式转换）
+│   ├── data/                   # 数据处理模块
+│   │   ├── __init__.py
+│   │   ├── data_loader.py      # CSV加载和采样
+│   │   ├── data_splitter.py    # 数据集划分（含K-fold）
+│   │   ├── data_storage.py     # 文件保存（CSV/JSON）
+│   │   ├── data_converter.py   # Alpaca格式转换
+│   │   └── data_statistics.py  # 数据统计信息
+│   ├── api_matcher.py          # API签名匹配器（新增）
 │   ├── prompt_utils.py         # Prompt处理工具（模板加载、格式化）
 │   └── evaluation_utils.py     # 评估工具函数（答案提取、指标计算）
 │
@@ -59,12 +68,24 @@ CS6158 project/
 │   └── evaluation_example.py   # 评估示例
 │
 ├── dataset/                     # 数据集目录
-│   └── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
+│   ├── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
+│   └── kfold_splits/           # K-fold划分结果
+│       ├── fold_1_train.csv
+│       ├── fold_1_test.csv
+│       └── ...
+│
+├── docs/                        # 文档目录（新增）
+│   ├── API_MATCHING.md         # API匹配详细文档
+│   └── QUICK_START_API_MATCHING.md  # API匹配快速开始
 │
 ├── output/                      # 输出目录
 │   └── (生成的文件)
 │
 ├── main.py                      # 快速启动脚本（交互式界面）
+├── test_api_matcher.py          # API匹配测试（新增）
+├── test_integration.py          # 集成测试（新增）
+├── example_api_matching.py      # API匹配示例（新增）
+├── CHANGELOG_API_MATCHING.md    # 更新日志（新增）
 ├── README.md                    # 项目文档
 └── .gitignore                   # Git忽略文件
 ```
@@ -114,13 +135,19 @@ pip install pandas openai tqdm
 
 提供通用的工具函数。
 
-**数据处理工具 (`data_utils.py`):**
-- `load_csv()`: 读取CSV文件
-- `sample_data()`: 数据采样
-- `convert_to_alpaca_format()`: 转换为Alpaca格式
-- `save_json()`: 保存JSON文件
-- `get_data_statistics()`: 获取数据统计信息
-- `print_data_info()`: 打印数据信息
+**数据处理模块 (`data/`):**
+- `data_loader.py`: CSV加载和数据采样
+- `data_splitter.py`: 数据集划分（支持K-fold交叉验证）
+- `data_storage.py`: CSV/JSON文件保存
+- `data_converter.py`: Alpaca格式转换
+- `data_statistics.py`: 数据统计和信息展示
+
+**API匹配器 (`api_matcher.py`) ✨ 新增:**
+- `APISignatureMatcher`: API签名匹配器类
+- `extract_apis()`: 从代码中提取API签名
+- `compute_similarity()`: 计算两段代码的相似度
+- `retrieve_top_k()`: 检索最相似的K个案例
+- `retrieve_with_diversity()`: 多样性检索（避免相似案例）
 
 **Prompt工具 (`prompt_utils.py`):**
 - `load_prompt()`: 加载prompt模板
@@ -146,20 +173,42 @@ pip install pandas openai tqdm
 数据蒸馏Agent，用于生成包含推理过程的训练数据集。
 
 **主要参数:**
+- `dataset_path`: 数据集路径（支持自定义）✨ 增强
 - `test_mode`: 测试模式 ('all', 'first', 'last', 'random')
 - `test_size`: 测试时使用的数据量
 - `batch_size`: 批次大小
+- `parallel_workers`: 并行线程数（1-10）
+- `api_matcher`: API匹配器实例 ✨ 新增
+- `top_k_shots`: Few-shot样本数量 ✨ 新增
 - `checkpoint_interval`: 检查点保存间隔
 
-**使用示例:**
+**使用示例（不使用API匹配）:**
 ```python
 agent = DistillationAgent(
-    test_mode='random',
-    test_size=10,
-    temperature=0.7,
-    batch_size=10
+    dataset_path='dataset/kfold_splits/fold_1_test.csv',
+    test_mode='all',
+    parallel_workers=5
 )
-result = agent.run(output_name='my_dataset')
+result = agent.run(output_name='distillation_fold1')
+```
+
+**使用示例（使用API匹配）:**
+```python
+from utils import load_csv, APISignatureMatcher
+
+# 创建API匹配器
+train_data = load_csv('dataset/kfold_splits/fold_1_train.csv')
+api_matcher = APISignatureMatcher(train_data)
+
+# 创建Agent（启用API匹配）
+agent = DistillationAgent(
+    dataset_path='dataset/kfold_splits/fold_1_test.csv',
+    test_mode='all',
+    api_matcher=api_matcher,
+    top_k_shots=3,
+    parallel_workers=5
+)
+result = agent.run(output_name='distillation_with_api')
 ```
 
 #### DataExplainerAgent (`data_explainer_agent.py`)
@@ -450,6 +499,156 @@ ls output/
 2. **生成**新的API密钥
 3. **更新** `.env` 文件中的密钥
 4. **检查**Git历史，确保 `.env` 在 `.gitignore` 中
+
+### 6. API匹配检索结果都是低相似度？
+**原因：** 训练集太小或测试代码差异大  
+**解决：** 
+- 扩大训练集规模（推荐>1000条）
+- 检查API提取规则是否适配代码风格
+- 降低 `min_similarity` 阈值
+
+### 7. API索引构建太慢？
+**原因：** 训练集规模过大（>10000条）  
+**解决：** 
+- 使用采样（如前5000条）
+- 在更强大的机器上预先构建索引并保存
+
+---
+
+## 🔍 API签名匹配功能
+
+### 功能概述
+
+API签名匹配是一个从训练集中检索最相似测试案例作为few-shot examples的工具，用于增强LLM的Flaky Test分类能力。
+
+**核心思想：**
+- 从训练集（知识库）中检索API签名相似的历史案例
+- 将这些案例作为few-shot examples插入到LLM的Prompt中
+- 提供具体的分类参考，提升分类准确率
+
+**优势：**
+- ✅ 无需向量数据库，秒级检索
+- ✅ 基于代码结构相似度，相关性高
+- ✅ 可解释性强（显示相似度分数）
+- ✅ 易于配置和扩展
+
+### 快速使用
+
+#### 方法1: 通过main.py交互式使用
+
+```bash
+python main.py
+# 选择 "1. 数据蒸馏"
+# 选择测试集（如 fold_1_test.csv）
+# 选择是否使用API匹配 → 输入 y
+# 选择训练集（如 fold_1_train.csv）
+# 设置few-shot数量（推荐3个）
+# 配置其他参数后开始
+```
+
+#### 方法2: 编程方式
+
+```python
+from utils import load_csv, APISignatureMatcher
+from agents import DistillationAgent
+
+# 1. 加载训练集
+train_data = load_csv('dataset/kfold_splits/fold_1_train.csv')
+
+# 2. 创建API匹配器
+api_matcher = APISignatureMatcher(train_data, code_column='full_code')
+
+# 3. 创建蒸馏Agent（启用API匹配）
+agent = DistillationAgent(
+    dataset_path='dataset/kfold_splits/fold_1_test.csv',
+    test_mode='all',
+    api_matcher=api_matcher,
+    top_k_shots=3,
+    parallel_workers=5
+)
+
+# 4. 运行蒸馏
+result = agent.run(output_name='distillation_with_api')
+```
+
+### API提取规则（9类）
+
+1. **测试注解**: `@Test`, `@Before`, `@After`, `@Mock`等
+2. **方法调用**: `object.method()`
+3. **断言API**: `assertEquals`, `assertNull`, `verify`等
+4. **并发关键字**: `Thread`, `ExecutorService`, `synchronized`等
+5. **时间API**: `Thread.sleep`, `TimeUnit`, `System.currentTimeMillis`等
+6. **集合类型**: `List`, `Set`, `Map`, `ArrayList`等
+7. **I/O操作**: `InputStream`, `FileReader`, `BufferedWriter`等
+8. **Mock框架**: `Mockito`, `PowerMock`
+9. **数据库**: `Connection`, `PreparedStatement`, `ResultSet`等
+
+### Few-shot Prompt效果
+
+**不使用API匹配：**
+```
+项目: netty_netty
+测试名称: testTimeout
+代码: ...
+
+请分析这个测试是否为Flaky Test。
+```
+
+**使用API匹配（Top-3）：**
+```
+参考案例（根据API签名相似度检索）：
+============================================================
+
+【案例 1】(相似度: 0.85)
+项目: apache_hadoop
+分类: 2 (Concurrency)
+代码: ...
+
+【案例 2】(相似度: 0.72)
+项目: spring_spring-framework
+分类: 2 (Concurrency)
+代码: ...
+
+【案例 3】(相似度: 0.68)
+项目: netty_netty
+分类: 0 (Non-flaky)
+代码: ...
+
+待分析的测试代码:
+项目: netty_netty
+测试名称: testTimeout
+代码: ...
+
+请参考上述案例，分析这个测试是否为Flaky Test。
+```
+
+### 推荐配置
+
+| 参数 | 推荐值 | 说明 |
+|------|--------|------|
+| Few-shot数量 | 3 | 平衡质量和成本 |
+| 训练集规模 | 6000+ | 提供足够的知识库 |
+| 相似度阈值 | 0.1-0.2 | 过滤低质量案例 |
+| 并行线程数 | 5 | 中等规模数据处理 |
+
+### 详细文档
+
+- **快速开始**: [docs/QUICK_START_API_MATCHING.md](docs/QUICK_START_API_MATCHING.md)
+- **详细文档**: [docs/API_MATCHING.md](docs/API_MATCHING.md)
+- **更新日志**: [CHANGELOG_API_MATCHING.md](CHANGELOG_API_MATCHING.md)
+
+### 测试和示例
+
+```bash
+# 运行API匹配测试
+python test_api_matcher.py
+
+# 运行集成测试
+python test_integration.py
+
+# 查看完整示例
+python example_api_matching.py
+```
 
 ---
 

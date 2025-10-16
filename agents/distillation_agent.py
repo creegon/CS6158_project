@@ -45,6 +45,8 @@ class DistillationAgent(BaseAgent):
                  batch_delay: Optional[float] = None,
                  checkpoint_interval: Optional[int] = None,
                  parallel_workers: int = 1,
+                 api_matcher=None,
+                 top_k_shots: int = 3,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -60,6 +62,8 @@ class DistillationAgent(BaseAgent):
             batch_delay: 批次延迟（秒）
             checkpoint_interval: 检查点保存间隔
             parallel_workers: 并行推理的工作线程数，1表示串行处理
+            api_matcher: API签名匹配器，用于检索few-shot examples
+            top_k_shots: 使用的few-shot样本数量
             **kwargs: 传递给BaseAgent的其他参数
         """
         super().__init__(**kwargs)
@@ -78,6 +82,10 @@ class DistillationAgent(BaseAgent):
         self.checkpoint_interval = checkpoint_interval or CHECKPOINT_INTERVAL
         self.parallel_workers = max(1, parallel_workers)  # 确保至少为1
         
+        # API匹配相关
+        self.api_matcher = api_matcher
+        self.top_k_shots = top_k_shots if api_matcher else 0
+        
         # 加载prompt模板
         self.system_prompt = load_prompt('distillation_system')
         self.user_template = load_prompt('distillation_user')
@@ -95,7 +103,7 @@ class DistillationAgent(BaseAgent):
     
     def generate_user_prompt(self, row: pd.Series) -> str:
         """
-        生成用户提示词
+        生成用户提示词（支持API匹配的few-shot examples）
         
         Args:
             row: 数据行
@@ -103,16 +111,86 @@ class DistillationAgent(BaseAgent):
         Returns:
             格式化的用户提示词
         """
+        prompt, _ = self.generate_user_prompt_with_examples(row)
+        return prompt
+    
+    def generate_user_prompt_with_examples(self, row: pd.Series) -> tuple:
+        """
+        生成用户提示词并返回few-shot examples（支持API匹配）
+        
+        Args:
+            row: 数据行
+            
+        Returns:
+            (格式化的用户提示词, few-shot examples列表)
+        """
         full_code = row.get(self.code_column, row.get('full_code', ''))
         project = row.get('project', 'Unknown')
         test_name = row.get('test_name', 'Unknown')
         
-        return format_prompt(
+        # 基础prompt
+        base_prompt = format_prompt(
             self.user_template, 
             project=project,
             test_name=test_name,
             full_code=full_code
         )
+        
+        few_shot_examples = None
+        
+        # 如果启用API匹配，添加few-shot examples
+        if self.api_matcher and self.top_k_shots > 0:
+            try:
+                # 检索最相似的案例
+                similar_cases = self.api_matcher.retrieve_top_k(
+                    full_code, 
+                    top_k=self.top_k_shots,
+                    min_similarity=0.1  # 最小相似度阈值
+                )
+                
+                if similar_cases:
+                    # 构建few-shot examples记录（用于debug）
+                    few_shot_examples = []
+                    for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
+                        example_info = {
+                            'index': int(idx),
+                            'similarity': float(similarity),
+                            'project': str(case_row.get('project', 'Unknown')),
+                            'test_name': str(case_row.get('test_name', 'Unknown')),
+                            'category': int(case_row.get('category', -1)),
+                            'code_preview': str(case_row.get(self.code_column, case_row.get('full_code', ''))[:200])
+                        }
+                        if 'id' in case_row:
+                            example_info['id'] = int(case_row['id'])
+                        few_shot_examples.append(example_info)
+                    
+                    # 构建few-shot examples文本（插入prompt）
+                    examples_text = "\n\n参考案例（根据API签名相似度检索）：\n"
+                    examples_text += "=" * 60 + "\n"
+                    
+                    for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
+                        case_code = case_row.get(self.code_column, case_row.get('full_code', ''))
+                        case_category = case_row.get('category', 'Unknown')
+                        case_project = case_row.get('project', 'Unknown')
+                        
+                        examples_text += f"\n【案例 {i}】(相似度: {similarity:.2f})\n"
+                        examples_text += f"项目: {case_project}\n"
+                        examples_text += f"分类: {case_category}\n"
+                        examples_text += f"代码:\n{case_code}\n"
+                        examples_text += "-" * 60 + "\n"
+                    
+                    # 将few-shot examples插入到prompt中
+                    # 在原始代码之前插入参考案例
+                    base_prompt = base_prompt.replace(
+                        full_code,
+                        examples_text + "\n待分析的测试代码:\n" + full_code
+                    )
+            
+            except Exception as e:
+                print(f"⚠ API匹配失败: {e}")
+                # 如果匹配失败，继续使用基础prompt
+        
+        return base_prompt, few_shot_examples
     
     def process_single_row(self, idx: int, row: pd.Series, include_id: bool = False) -> Optional[Dict]:
         """
@@ -126,8 +204,8 @@ class DistillationAgent(BaseAgent):
         Returns:
             Alpaca格式的数据，失败返回None
         """
-        # 生成prompt
-        user_prompt = self.generate_user_prompt(row)
+        # 生成prompt（同时获取few-shot examples）
+        user_prompt, few_shot_examples = self.generate_user_prompt_with_examples(row)
         
         # 调用API获取推理过程
         reasoning = self.call_api(user_prompt)
@@ -138,14 +216,15 @@ class DistillationAgent(BaseAgent):
                 self.failed_indices.append(idx)
             return None
         
-        # 转换为Alpaca格式，传入 system_prompt 和 user_template
+        # 转换为Alpaca格式，传入 system_prompt、user_template 和 few_shot_examples
         alpaca_item = convert_to_alpaca_format(
             row, 
             reasoning, 
             self.code_column, 
             include_id=include_id,
             system_prompt=self.system_prompt,
-            user_template=self.user_template
+            user_template=self.user_template,
+            few_shot_examples=few_shot_examples
         )
         return alpaca_item
     

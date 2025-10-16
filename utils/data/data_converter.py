@@ -11,7 +11,8 @@ def convert_to_alpaca_format(row: pd.Series,
                             code_column: str = 'code',
                             include_id: bool = False,
                             system_prompt: str = None,
-                            user_template: str = None) -> Dict:
+                            user_template: str = None,
+                            few_shot_examples: list = None) -> Dict:
     """
     将数据转换为Alpaca格式
     
@@ -22,6 +23,7 @@ def convert_to_alpaca_format(row: pd.Series,
         include_id: 是否包含ID字段（用于评估）
         system_prompt: 系统提示词（用作instruction）
         user_template: 用户提示词模板（用作input模板）
+        few_shot_examples: Few-shot样本列表（用于debug）
         
     Returns:
         Alpaca格式的字典
@@ -61,5 +63,9 @@ def convert_to_alpaca_format(row: pd.Series,
     # 如果需要包含ID字段（用于评估）
     if include_id and 'id' in row:
         alpaca_item['id'] = int(row['id'])
+        
+        # 如果提供了few-shot examples，也记录下来（用于debug）
+        if few_shot_examples:
+            alpaca_item['few_shot_examples'] = few_shot_examples
     
     return alpaca_item
