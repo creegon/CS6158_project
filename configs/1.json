@@ -1,0 +1,11 @@
+{
+  "task_type": "distillation",
+  "test_dataset": "C:\\Users\\creegon\\Desktop\\CS6158 project\\dataset\\kfold_splits\\fold_1_test.csv",
+  "train_dataset": "C:\\Users\\creegon\\Desktop\\CS6158 project\\dataset\\kfold_splits\\fold_1_train.csv",
+  "use_api_matching": true,
+  "top_k_shots": 3,
+  "mode": "random",
+  "test_size": 10,
+  "parallel_workers": 5,
+  "batch_size": 5
+}

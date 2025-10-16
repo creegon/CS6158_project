@@ -13,7 +13,8 @@ from agents import DistillationAgent, DataExplainerAgent
 from evaluation import Evaluator
 from utils import (load_csv, split_dataset, save_split_datasets, 
                    create_project_wise_kfold_splits, save_kfold_datasets,
-                   APISignatureMatcher)
+                   APISignatureMatcher, save_config, load_config, 
+                   list_saved_configs, delete_config, display_config)
 from config import DATASET_PATH, OUTPUT_DIR
 
 
@@ -100,7 +101,8 @@ def print_menu():
     print("2. 数据讲解")
     print("3. 评估预测结果")
     print("4. 数据集划分")
-    print("5. 退出")
+    print("5. 配置管理")
+    print("6. 退出")
     print("=" * 60)
 
 
@@ -110,74 +112,124 @@ def run_distillation():
     print("数据蒸馏配置")
     print("=" * 60)
     
-    try:
-        # Step 1: 选择测试集
-        print("\n【Step 1/5】选择测试集")
-        test_dataset = select_dataset("请选择测试集")
-        if not test_dataset:
-            print("已取消")
-            return
-        print(f"✓ 测试集: {test_dataset.name}")
+    # 检查是否有保存的配置
+    saved_configs = list_saved_configs()
+    use_saved_config = False
+    config_to_save = {}
+    
+    if saved_configs:
+        print("\n💾 发现已保存的配置:")
+        for i, config_name in enumerate(saved_configs, 1):
+            print(f"  {i}. {config_name}")
+        print(f"  0. 新建配置")
         
-        # Step 2: 选择训练集（可选，用于API匹配）
-        print("\n【Step 2/5】选择训练集（用于API匹配，可选）")
-        print("提示: 如果选择训练集，将使用API签名匹配来检索few-shot examples")
-        use_api_matching = input("是否使用API匹配？(y/n, 默认n): ").strip().lower() == 'y'
+        choice = input("\n选择配置 (0-{}，默认0): ".format(len(saved_configs))).strip() or "0"
         
-        train_dataset = None
-        api_matcher = None
-        top_k_shots = 3
-        
-        if use_api_matching:
-            train_dataset = select_dataset("请选择训练集（用作知识库）", allow_none=True)
-            if train_dataset:
-                print(f"✓ 训练集: {train_dataset.name}")
-                
-                # 加载训练集并创建API匹配器
-                print("\n正在加载训练集并构建API索引...")
-                train_data = load_csv(train_dataset)
-                api_matcher = APISignatureMatcher(train_data, code_column='full_code')
-                
-                # 显示统计信息
-                stats = api_matcher.get_statistics()
-                print(f"✓ API索引构建完成:")
-                print(f"  - 训练样本数: {stats['total_train_samples']}")
-                print(f"  - 唯一API数: {stats['total_unique_apis']}")
-                print(f"  - 平均API数/样本: {stats['avg_apis_per_sample']:.1f}")
-                print(f"  - 最常见API: {', '.join([api for api, _ in stats['most_common_apis'][:5]])}")
-                
-                # 设置few-shot数量
-                top_k_shots = int(input("\n请输入few-shot样本数 (默认3): ").strip() or "3")
-                top_k_shots = max(1, min(10, top_k_shots))
+        if choice != '0':
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(saved_configs):
+                    config_name = saved_configs[idx]
+                    config = load_config(config_name)
+                    
+                    if config and config.get('task_type') == 'distillation':
+                        display_config(config)
+                        confirm = input("\n使用此配置？(y/n): ").strip().lower()
+                        if confirm == 'y':
+                            use_saved_config = True
+                            # 从配置中提取参数
+                            test_dataset = config['test_dataset']
+                            train_dataset = config.get('train_dataset')
+                            use_api_matching = config.get('use_api_matching', False)
+                            top_k_shots = config.get('top_k_shots', 3)
+                            mode = config.get('mode', 'random')
+                            test_size = config.get('test_size', 10)
+                            parallel_workers = config.get('parallel_workers', 5)
+                            batch_size = config.get('batch_size', 5)
+                    else:
+                        print("✗ 配置类型不匹配")
+            except (ValueError, IndexError):
+                print("✗ 无效选择")
+    
+    if not use_saved_config:
+        # 原有的配置流程
+        try:
+            # Step 1: 选择测试集
+            print("\n【Step 1/5】选择测试集")
+            test_dataset = select_dataset("请选择测试集")
+            if not test_dataset:
+                print("已取消")
+                return
+            print(f"✓ 测试集: {test_dataset.name}")
+            
+            # Step 2: 选择训练集（可选，用于API匹配）
+            print("\n【Step 2/5】选择训练集（用于API匹配，可选）")
+            print("提示: 如果选择训练集，将使用API签名匹配来检索few-shot examples")
+            use_api_matching = input("是否使用API匹配？(y/n, 默认n): ").strip().lower() == 'y'
+            
+            train_dataset = None
+            top_k_shots = 3
+            
+            if use_api_matching:
+                train_dataset = select_dataset("请选择训练集（用作知识库）", allow_none=True)
+                if train_dataset:
+                    print(f"✓ 训练集: {train_dataset.name}")
+                    
+                    # 设置few-shot数量
+                    top_k_shots = int(input("\n请输入few-shot样本数 (默认3): ").strip() or "3")
+                    top_k_shots = max(1, min(10, top_k_shots))
+                else:
+                    print("✓ 跳过API匹配")
+                    use_api_matching = False
+            
+            # Step 3: 选择测试模式
+            print("\n【Step 3/5】测试模式")
+            print("1. 最后N条")
+            print("2. 前N条")
+            print("3. 随机N条")
+            print("4. 全部数据")
+            mode_choice = input("选择模式 (1-4, 默认3): ").strip() or "3"
+            
+            mode_map = {'1': 'last', '2': 'first', '3': 'random', '4': 'all'}
+            mode = mode_map.get(mode_choice, 'last')
+            
+            # 输入数据量（如果不是全部）
+            if mode != 'all':
+                test_size = int(input("请输入数据量 (默认10): ").strip() or "10")
             else:
-                print("✓ 跳过API匹配")
-                use_api_matching = False
-        
-        # Step 3: 选择测试模式
-        print("\n【Step 3/5】测试模式")
-        print("1. 最后N条")
-        print("2. 前N条")
-        print("3. 随机N条")
-        print("4. 全部数据")
-        mode_choice = input("选择模式 (1-4, 默认1): ").strip() or "1"
-        
-        mode_map = {'1': 'last', '2': 'first', '3': 'random', '4': 'all'}
-        mode = mode_map.get(mode_choice, 'last')
-        
-        # 输入数据量（如果不是全部）
-        if mode != 'all':
-            test_size = int(input("请输入数据量 (默认10): ").strip() or "10")
-        else:
-            test_size = None
-            print("将处理全部数据")
-        
-        # Step 4: 并行配置
-        print("\n【Step 4/5】并行配置")
-        parallel_workers = int(input("请输入并行线程数 (1-10，默认1): ").strip() or "1")
-        parallel_workers = max(1, min(10, parallel_workers))
-        
-        batch_size = int(input("请输入批次大小 (默认5): ").strip() or "5")
-        
+                test_size = None
+                print("将处理全部数据")
+            
+            # Step 4: 并行配置
+            print("\n【Step 4/5】并行配置")
+            parallel_workers = int(input("请输入并行线程数 (1-10，默认5): ").strip() or "5")
+            parallel_workers = max(1, min(10, parallel_workers))
+            
+            batch_size = int(input("请输入批次大小 (默认5): ").strip() or "5")
+            
+            # 保存配置以备后用
+            config_to_save = {
+                'task_type': 'distillation',
+                'test_dataset': test_dataset,
+                'train_dataset': train_dataset,
+                'use_api_matching': use_api_matching,
+                'top_k_shots': top_k_shots,
+                'mode': mode,
+                'test_size': test_size,
+                'parallel_workers': parallel_workers,
+                'batch_size': batch_size
+            }
+            
+        except ValueError as e:
+            print(f"✗ 输入错误: {e}")
+            return
+        except Exception as e:
+            print(f"✗ 发生错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+    
+    try:
         # Step 5: 确认配置
         print("\n【Step 5/5】配置确认")
         print("=" * 60)
@@ -193,10 +245,35 @@ def run_distillation():
         print(f"批次大小: {batch_size}")
         print("=" * 60)
         
-        confirm = input("\n确认开始？(y/n): ").strip().lower()
+        confirm = input("\n确认开始？(y/n): ").strip().lower() or "y"
         if confirm != 'y':
             print("已取消")
             return
+        
+        # 如果是新配置，询问是否保存
+        if not use_saved_config and config_to_save:
+            save_choice = input("\n💾 是否保存此配置供下次使用？(y/n): ").strip().lower()
+            if save_choice == 'y':
+                config_name = input("请输入配置名称: ").strip()
+                if config_name:
+                    save_config(config_to_save, config_name)
+        
+        # 加载训练数据并创建API匹配器（如果需要）
+        api_matcher = None
+        train_data = None
+        
+        if use_api_matching and train_dataset:
+            print("\n正在加载训练集并构建API索引...")
+            train_data = load_csv(train_dataset)
+            api_matcher = APISignatureMatcher(train_data, code_column='full_code')
+            
+            # 显示统计信息
+            stats = api_matcher.get_statistics()
+            print(f"✓ API索引构建完成:")
+            print(f"  - 训练样本数: {stats['total_train_samples']}")
+            print(f"  - 唯一API数: {stats['total_unique_apis']}")
+            print(f"  - 平均API数/样本: {stats['avg_apis_per_sample']:.1f}")
+            print(f"  - 最常见API: {', '.join([api for api, _ in stats['most_common_apis'][:5]])}")
         
         # 创建Agent并运行
         print("\n🚀 开始数据蒸馏...")
@@ -525,11 +602,71 @@ def run_dataset_split():
         traceback.print_exc()
 
 
+def run_config_manager():
+    """配置管理"""
+    print("\n" + "=" * 60)
+    print("配置管理")
+    print("=" * 60)
+    
+    while True:
+        saved_configs = list_saved_configs()
+        
+        if not saved_configs:
+            print("\n📝 当前没有保存的配置")
+            print("\n提示: 在数据蒸馏或其他任务完成配置后，可以选择保存配置供下次使用")
+            return
+        
+        print(f"\n💾 已保存的配置 (共{len(saved_configs)}个):")
+        for i, config_name in enumerate(saved_configs, 1):
+            print(f"  {i}. {config_name}")
+        
+        print("\n操作:")
+        print("  v. 查看配置")
+        print("  d. 删除配置")
+        print("  0. 返回主菜单")
+        
+        choice = input("\n选择操作: ").strip().lower()
+        
+        if choice == '0':
+            break
+        elif choice == 'v':
+            idx_input = input("请输入要查看的配置编号: ").strip()
+            try:
+                idx = int(idx_input) - 1
+                if 0 <= idx < len(saved_configs):
+                    config_name = saved_configs[idx]
+                    config = load_config(config_name)
+                    if config:
+                        print(f"\n📄 配置: {config_name}")
+                        display_config(config)
+                else:
+                    print("✗ 无效的编号")
+            except ValueError:
+                print("✗ 请输入数字")
+        
+        elif choice == 'd':
+            idx_input = input("请输入要删除的配置编号: ").strip()
+            try:
+                idx = int(idx_input) - 1
+                if 0 <= idx < len(saved_configs):
+                    config_name = saved_configs[idx]
+                    confirm = input(f"确认删除配置 '{config_name}'? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        delete_config(config_name)
+                else:
+                    print("✗ 无效的编号")
+            except ValueError:
+                print("✗ 请输入数字")
+        
+        else:
+            print("✗ 无效的操作")
+
+
 def main():
     """主函数"""
     while True:
         print_menu()
-        choice = input("\n请选择操作 (1-5): ").strip()
+        choice = input("\n请选择操作 (1-6): ").strip()
         
         if choice == '1':
             run_distillation()
@@ -540,6 +677,8 @@ def main():
         elif choice == '4':
             run_dataset_split()
         elif choice == '5':
+            run_config_manager()
+        elif choice == '6':
             print("\n👋 再见!")
             break
         else:

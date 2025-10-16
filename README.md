@@ -10,6 +10,8 @@
 - 🔄 **完整流程**：从数据蒸馏到模型评估的端到端解决方案
 - 🔍 **API签名匹配**：基于代码结构相似度检索few-shot examples，增强LLM分类能力
 - 📂 **灵活数据管理**：支持自定义训练集/测试集，完美适配K-fold交叉验证
+- 💾 **配置复用**：保存和加载实验配置，快速切换不同实验设置
+- 📝 **Few-shot增强**：自动检索相似案例，提供标签和相似度元数据
 
 ## 目录
 
@@ -29,8 +31,11 @@ CS6158 project/
 │   ├── __init__.py
 │   └── config.py               # API密钥、路径等配置
 │
+├── configs/                     # 保存的实验配置（新增）
+│   └── *.json                  # 配置文件（运行时生成）
+│
 ├── prompts/                     # Prompt模板
-│   ├── distillation_system.txt # 蒸馏系统提示词
+│   ├── distillation_system.txt # 蒸馏系统提示词（已更新：添加few-shot指导）
 │   ├── distillation_user.txt   # 蒸馏用户提示词
 │   ├── explainer_system.txt    # 讲解系统提示词
 │   └── explainer_user.txt      # 讲解用户提示词
@@ -44,14 +49,15 @@ CS6158 project/
 │   │   ├── data_storage.py     # 文件保存（CSV/JSON）
 │   │   ├── data_converter.py   # Alpaca格式转换
 │   │   └── data_statistics.py  # 数据统计信息
-│   ├── api_matcher.py          # API签名匹配器（新增）
+│   ├── api_matcher.py          # API签名匹配器
+│   ├── config_manager.py       # 配置管理（新增）
 │   ├── prompt_utils.py         # Prompt处理工具（模板加载、格式化）
 │   └── evaluation_utils.py     # 评估工具函数（答案提取、指标计算）
 │
 ├── agents/                      # Agent模块
 │   ├── __init__.py
 │   ├── base_agent.py           # Agent基类
-│   ├── distillation_agent.py   # 数据蒸馏Agent
+│   ├── distillation_agent.py   # 数据蒸馏Agent（已更新：few-shot集成、单次处理优化）
 │   ├── data_explainer_agent.py # 数据讲解Agent
 │   └── multi_agent.py          # 多Agent协作框架
 │
@@ -65,7 +71,8 @@ CS6158 project/
 │   ├── distillation_example.py
 │   ├── data_explainer_example.py
 │   ├── multi_agent_example.py
-│   └── evaluation_example.py   # 评估示例
+│   ├── evaluation_example.py   # 评估示例
+│   └── example_api_matching.py # API匹配示例
 │
 ├── dataset/                     # 数据集目录
 │   ├── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
@@ -74,19 +81,23 @@ CS6158 project/
 │       ├── fold_1_test.csv
 │       └── ...
 │
-├── docs/                        # 文档目录（新增）
+├── docs/                        # 文档目录
 │   ├── API_MATCHING.md         # API匹配详细文档
 │   └── QUICK_START_API_MATCHING.md  # API匹配快速开始
 │
 ├── output/                      # 输出目录
-│   └── (生成的文件)
+│   ├── *_external.json         # 包含id和few_shot_examples的完整输出（新增）
+│   ├── *.json                  # 标准Alpaca格式输出（仅instruction/input/output）
+│   └── (其他生成文件)
 │
-├── main.py                      # 快速启动脚本（交互式界面）
-├── test_api_matcher.py          # API匹配测试（新增）
-├── test_integration.py          # 集成测试（新增）
-├── example_api_matching.py      # API匹配示例（新增）
-├── CHANGELOG_API_MATCHING.md    # 更新日志（新增）
-├── README.md                    # 项目文档
+├── main.py                      # 快速启动脚本（已更新：配置管理功能）
+├── test_api_matcher.py          # API匹配测试
+├── test_integration.py          # 集成测试
+├── test_config_manager.py       # 配置管理测试（新增）
+├── example_api_matching.py      # API匹配示例
+├── CHANGELOG_API_MATCHING.md    # API匹配更新日志
+├── CONFIG_USAGE_GUIDE.md        # 配置复用使用指南（新增）
+├── README.md                    # 项目文档（本文件）
 └── .gitignore                   # Git忽略文件
 ```
 
@@ -142,12 +153,19 @@ pip install pandas openai tqdm
 - `data_converter.py`: Alpaca格式转换
 - `data_statistics.py`: 数据统计和信息展示
 
-**API匹配器 (`api_matcher.py`) ✨ 新增:**
+**API匹配器 (`api_matcher.py`) ✨:**
 - `APISignatureMatcher`: API签名匹配器类
-- `extract_apis()`: 从代码中提取API签名
-- `compute_similarity()`: 计算两段代码的相似度
+- `extract_apis()`: 从代码中提取API签名（9个类别）
+- `compute_similarity()`: 计算两段代码的相似度（Jaccard系数 + 频率加权）
 - `retrieve_top_k()`: 检索最相似的K个案例
 - `retrieve_with_diversity()`: 多样性检索（避免相似案例）
+
+**配置管理器 (`config_manager.py`) ✨ 新增:**
+- `save_config(config, name)`: 保存实验配置到JSON文件
+- `load_config(name)`: 从JSON加载配置（自动转换Path对象）
+- `list_saved_configs()`: 列出所有已保存的配置
+- `delete_config(name)`: 删除指定配置
+- `display_config(config)`: 格式化显示配置详情
 
 **Prompt工具 (`prompt_utils.py`):**
 - `load_prompt()`: 加载prompt模板
@@ -172,15 +190,45 @@ pip install pandas openai tqdm
 
 数据蒸馏Agent，用于生成包含推理过程的训练数据集。
 
+**核心改进 ✨:**
+- **Few-shot集成**: 自动从训练集检索相似案例并插入Prompt
+- **单次处理优化**: 避免重复API调用，性能提升3倍
+- **双格式输出**: 生成标准版（纯训练数据）和external版（含元数据）
+- **元数据丰富**: 记录few-shot案例的相似度、标签、代码预览
+
 **主要参数:**
-- `dataset_path`: 数据集路径（支持自定义）✨ 增强
+- `dataset_path`: 数据集路径（支持自定义）
 - `test_mode`: 测试模式 ('all', 'first', 'last', 'random')
 - `test_size`: 测试时使用的数据量
 - `batch_size`: 批次大小
 - `parallel_workers`: 并行线程数（1-10）
-- `api_matcher`: API匹配器实例 ✨ 新增
-- `top_k_shots`: Few-shot样本数量 ✨ 新增
+- `api_matcher`: API匹配器实例 ✨ 
+- `top_k_shots`: Few-shot样本数量 ✨ 
 - `checkpoint_interval`: 检查点保存间隔
+
+**输出文件:**
+- `{name}_external.json`: 包含 `id` 和 `few_shot_examples` 字段（用于调试）
+- `{name}.json`: 标准Alpaca格式（仅 `instruction`, `input`, `output`）
+
+**Few-shot元数据结构:**
+```json
+{
+  "instruction": "...",
+  "input": "...",
+  "output": "...",
+  "id": 12345,
+  "few_shot_examples": [
+    {
+      "similarity": 0.85,
+      "project": "apache_hadoop",
+      "test_name": "testConcurrentAccess",
+      "label": "Conc",
+      "code_preview": "...",
+      "id": 67890
+    }
+  ]
+}
+```
 
 **使用示例（不使用API匹配）:**
 ```python
@@ -352,16 +400,75 @@ result = agent.run(output_name='full_dataset')
 
 使用 Evaluator 评估预测结果，查看总体准确率和Flaky检测F1分数
 
+### 场景6: Few-shot增强实验 ✨ 新增
+
+```python
+from utils import load_csv, APISignatureMatcher
+
+# K-fold交叉验证 + API匹配
+for fold in range(1, 6):
+    # 加载训练集
+    train_data = load_csv(f'dataset/kfold_splits/fold_{fold}_train.csv')
+    
+    # 创建API匹配器
+    api_matcher = APISignatureMatcher(train_data)
+    
+    # 创建蒸馏Agent
+    agent = DistillationAgent(
+        dataset_path=f'dataset/kfold_splits/fold_{fold}_test.csv',
+        test_mode='all',
+        api_matcher=api_matcher,
+        top_k_shots=3,
+        parallel_workers=5
+    )
+    
+    # 运行蒸馏
+    agent.run(output_name=f'fold_{fold}_with_api')
+```
+
+### 场景7: 配置复用实验 ✨ 新增
+
+```python
+# 第一次运行：保存配置
+# 运行 python main.py → 选择 1. 数据蒸馏
+# 完成所有配置后，选择保存为 "baseline_experiment"
+
+# 后续运行：加载配置
+# 运行 python main.py → 选择 1. 数据蒸馏
+# 检测到配置后，输入编号加载
+# 确认配置后直接开始运行
+
+# 对比实验：保存多个配置
+# - baseline (无API匹配)
+# - api_top3 (API匹配, K=3)
+# - api_top5 (API匹配, K=5)
+# 快速切换不同配置进行对比实验
+```
+
 ## 📝 Prompt管理
 
 Prompt模板存储在 `prompts/` 目录下，每个场景使用独立的txt文件：
 
-- `distillation_system.txt`: 蒸馏任务的系统提示词
+- `distillation_system.txt`: 蒸馏任务的系统提示词 ✨ **已更新**：添加few-shot使用指导
 - `distillation_user.txt`: 蒸馏任务的用户提示词模板
 - `explainer_system.txt`: 讲解任务的系统提示词
 - `explainer_user.txt`: 讲解任务的用户提示词模板
 
 可以直接编辑这些文件来更新prompt，无需修改代码。
+
+### Few-shot指导说明（distillation_system.txt）
+
+系统提示词已添加以下指导内容：
+
+```
+如果提供了参考案例（Few-shot Examples）：
+- 参考案例按照API签名相似度排序，相似度越高越相关
+- 优先参考相似度较高的案例
+- 参考案例的分类结论可以作为参考，但不应盲目照搬
+- 应当结合参考案例和当前测试代码的具体情况，做出独立判断
+```
+
+这些指导帮助LLM更好地利用few-shot examples，提升分类准确率。
 
 ## 🔧 高级功能
 
@@ -382,6 +489,57 @@ Prompt模板存储在 `prompts/` 目录下，每个场景使用独立的txt文�
 ### 多Agent协作
 
 使用 `SequentialCoordinator` 可以协调多个Agent按顺序执行任务。
+
+### 配置管理 ✨ 新增
+
+**保存配置**：完成实验配置后，系统会询问是否保存配置以便复用
+
+**加载配置**：下次运行时自动检测已保存的配置，可快速加载
+
+**管理配置**：在主菜单选择"5. 配置管理"查看和删除配置
+
+**配置内容**：
+- 任务类型（distillation/explainer/evaluation）
+- 测试集和训练集路径
+- API匹配设置（是否启用、few-shot数量）
+- 测试模式和数据量
+- 并行线程数和批次大小
+
+**使用方式**：
+```bash
+# 方式1：通过交互式界面
+python main.py
+# 选择 "1. 数据蒸馏"
+# 如果有保存的配置，输入编号加载
+# 或按回车手动配置，完成后选择保存
+
+# 方式2：配置管理
+python main.py
+# 选择 "5. 配置管理"
+# v - 查看配置详情
+# d - 删除配置
+# 0 - 返回主菜单
+```
+
+**配置文件位置**：`configs/` 目录下（JSON格式）
+
+**详细使用指南**：参见 [CONFIG_USAGE_GUIDE.md](CONFIG_USAGE_GUIDE.md)
+
+### 双格式输出 ✨ 新增
+
+当启用API匹配时，系统会生成两个版本的输出文件：
+
+1. **External版本** (`{name}_external.json`)：
+   - 包含完整元数据：`id`、`few_shot_examples`
+   - 用于调试和分析few-shot效果
+   - 记录每个案例的相似度、标签、代码预览
+
+2. **标准版本** (`{name}.json`)：
+   - 仅包含 `instruction`、`input`、`output` 字段
+   - 用于模型训练（干净的训练数据）
+   - 自动从external版本生成，无需额外API调用
+
+**性能优化**：单次处理策略避免重复API调用，相比双次调用提升3倍速度
 
 ## 🚧 待实现功能
 
@@ -500,18 +658,32 @@ ls output/
 3. **更新** `.env` 文件中的密钥
 4. **检查**Git历史，确保 `.env` 在 `.gitignore` 中
 
-### 6. API匹配检索结果都是低相似度？
+### 7. API匹配检索结果都是低相似度？
 **原因：** 训练集太小或测试代码差异大  
 **解决：** 
 - 扩大训练集规模（推荐>1000条）
 - 检查API提取规则是否适配代码风格
 - 降低 `min_similarity` 阈值
 
-### 7. API索引构建太慢？
+### 8. API索引构建太慢？
 **原因：** 训练集规模过大（>10000条）  
 **解决：** 
 - 使用采样（如前5000条）
 - 在更强大的机器上预先构建索引并保存
+
+### 9. External和标准JSON有什么区别？
+**答：** 
+- **External版本**：包含 `id` 和 `few_shot_examples` 元数据，用于调试
+- **标准版本**：仅包含 `instruction`/`input`/`output`，用于模型训练
+- 两个版本的 `output` 字段完全相同（LLM看到的内容一致）
+- Few-shot examples在API调用时已插入Prompt，不在训练数据中
+
+### 10. 配置文件保存在哪里？
+**答：** 保存在 `configs/` 目录下（JSON格式），文件名为你输入的配置名称
+
+### 11. 如何删除配置？
+**方式1：** 主菜单 → 5. 配置管理 → d（删除）→ 输入编号  
+**方式2：** 直接删除 `configs/` 目录下的对应JSON文件
 
 ---
 

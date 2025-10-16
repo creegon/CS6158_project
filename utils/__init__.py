@@ -32,6 +32,15 @@ from .prompt_utils import (
 # API匹配器
 from .api_matcher import APISignatureMatcher
 
+# 配置管理
+from .config_manager import (
+    save_config,
+    load_config,
+    list_saved_configs,
+    delete_config,
+    display_config
+)
+
 __all__ = [
     # data module
     'load_csv',
@@ -52,4 +61,10 @@ __all__ = [
     'save_prompt',
     # api_matcher
     'APISignatureMatcher',
+    # config_manager
+    'save_config',
+    'load_config',
+    'list_saved_configs',
+    'delete_config',
+    'display_config',
 ]

@@ -153,11 +153,10 @@ class DistillationAgent(BaseAgent):
                     few_shot_examples = []
                     for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
                         example_info = {
-                            'index': int(idx),
                             'similarity': float(similarity),
                             'project': str(case_row.get('project', 'Unknown')),
                             'test_name': str(case_row.get('test_name', 'Unknown')),
-                            'category': int(case_row.get('category', -1)),
+                            'label': str(case_row.get('label', 'Unknown')),
                             'code_preview': str(case_row.get(self.code_column, case_row.get('full_code', ''))[:200])
                         }
                         if 'id' in case_row:
@@ -170,12 +169,12 @@ class DistillationAgent(BaseAgent):
                     
                     for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
                         case_code = case_row.get(self.code_column, case_row.get('full_code', ''))
-                        case_category = case_row.get('category', 'Unknown')
+                        case_label = case_row.get('label', 'Unknown')
                         case_project = case_row.get('project', 'Unknown')
                         
                         examples_text += f"\n【案例 {i}】(相似度: {similarity:.2f})\n"
                         examples_text += f"项目: {case_project}\n"
-                        examples_text += f"分类: {case_category}\n"
+                        examples_text += f"标签: {case_label}\n"
                         examples_text += f"代码:\n{case_code}\n"
                         examples_text += "-" * 60 + "\n"
                     
