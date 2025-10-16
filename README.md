@@ -30,13 +30,13 @@
 CS6158 project/
 ├── config/                      # 配置文件
 │   ├── __init__.py
-│   └── config.py               # API密钥、路径等配置
+│   └── config.py               # API密钥、路径等配置（支持多提供商）
 │
-├── configs/                     # 保存的实验配置（新增）
+├── configs/                     # 保存的实验配置
 │   └── *.json                  # 配置文件（运行时生成）
 │
 ├── prompts/                     # Prompt模板
-│   ├── distillation_system.txt # 蒸馏系统提示词（已更新：添加few-shot指导）
+│   ├── distillation_system.txt # 蒸馏系统提示词（含few-shot指导）
 │   ├── distillation_user.txt   # 蒸馏用户提示词
 │   ├── explainer_system.txt    # 讲解系统提示词
 │   └── explainer_user.txt      # 讲解用户提示词
@@ -51,58 +51,53 @@ CS6158 project/
 │   │   ├── data_converter.py   # Alpaca格式转换
 │   │   └── data_statistics.py  # 数据统计信息
 │   ├── api_matcher.py          # API签名匹配器
-│   ├── config_manager.py       # 配置管理（新增）
-│   ├── prompt_utils.py         # Prompt处理工具（模板加载、格式化）
-│   └── evaluation_utils.py     # 评估工具函数（答案提取、指标计算）
+│   ├── config_manager.py       # 配置管理
+│   ├── provider_manager.py     # 提供商管理（新增）
+│   ├── prompt_utils.py         # Prompt处理工具
+│   └── evaluation_utils.py     # 评估工具函数
 │
 ├── agents/                      # Agent模块
 │   ├── __init__.py
-│   ├── base_agent.py           # Agent基类
-│   ├── distillation_agent.py   # 数据蒸馏Agent（已更新：few-shot集成、单次处理优化）
+│   ├── base_agent.py           # Agent基类（支持多提供商）
+│   ├── distillation_agent.py   # 数据蒸馏Agent（few-shot集成）
 │   ├── data_explainer_agent.py # 数据讲解Agent
 │   └── multi_agent.py          # 多Agent协作框架
 │
 ├── evaluation/                  # 评估模块
 │   ├── __init__.py
-│   ├── evaluator.py            # 评估器主类（整合评估流程）
-│   ├── data_loader.py          # 数据加载器（Alpaca JSON & CSV标签）
-│   └── report_generator.py     # 报告生成器（文本/JSON报告）
+│   ├── evaluator.py            # 评估器主类
+│   ├── data_loader.py          # 数据加载器
+│   └── report_generator.py     # 报告生成器
 │
 ├── examples/                    # 使用示例
 │   ├── distillation_example.py
 │   ├── data_explainer_example.py
 │   ├── multi_agent_example.py
-│   ├── evaluation_example.py   # 评估示例
-│   └── example_api_matching.py # API匹配示例
+│   ├── evaluation_example.py
+│   ├── api_matching_example.py # API匹配示例
+│   └── siliconflow_example.py  # SiliconFlow示例（新增）
 │
 ├── dataset/                     # 数据集目录
-│   ├── FlakyLens_dataset_with_nonflaky_indented.csv  # 原始数据集
 │   └── kfold_splits/           # K-fold划分结果
-│       ├── fold_1_train.csv
-│       ├── fold_1_test.csv
-│       └── ...
+│       ├── fold_*_train.csv
+│       └── fold_*_test.csv
 │
 ├── docs/                        # 文档目录
 │   ├── API_MATCHING.md         # API匹配详细文档
 │   ├── QUICK_START_API_MATCHING.md  # API匹配快速开始
-│   └── SILICONFLOW_GUIDE.md    # SiliconFlow使用指南（新增）
+│   ├── FEW_SHOT_RECORDING.md   # Few-shot记录说明
+│   └── SILICONFLOW_GUIDE.md    # SiliconFlow使用指南
 │
-├── output/                      # 输出目录
-│   ├── *_external.json         # 包含id和few_shot_examples的完整输出（新增）
-│   ├── *.json                  # 标准Alpaca格式输出（仅instruction/input/output）
-│   └── (其他生成文件)
+├── output/                      # 输出目录（运行时生成）
+│   ├── *_external.json         # 含元数据的完整输出
+│   ├── *.json                  # 标准Alpaca格式输出
+│   └── ...
 │
-├── main.py                      # 快速启动脚本（已更新：配置管理+模型设置）
-├── switch_provider.py           # 快速切换API提供商（新增）
-├── example_siliconflow.py       # SiliconFlow使用示例（新增）
-├── test_api_matcher.py          # API匹配测试
-├── test_integration.py          # 集成测试
-├── test_config_manager.py       # 配置管理测试
-├── example_api_matching.py      # API匹配示例
-├── CHANGELOG_API_MATCHING.md    # API匹配更新日志
-├── CONFIG_USAGE_GUIDE.md        # 配置复用使用指南
-├── README.md                    # 项目文档（本文件）
-└── .gitignore                   # Git忽略文件
+├── main.py                      # 快速启动脚本（交互式界面）
+├── requirements.txt             # Python依赖
+├── .env.example                # 环境变量模板
+├── .env                        # 环境变量配置（本地，不提交）
+└── README.md                    # 项目文档（本文件）
 ```
 
 ## 🚀 快速开始
