@@ -2,23 +2,65 @@
 评估报告生成器
 生成详细的评估报告
 """
-from typing import Dict
+from typing import Dict, List, Any
 from pathlib import Path
 import json
 from utils.evaluation_utils import format_percentage
 
 
+def check_context_availability(pred_item: Dict[str, Any]) -> tuple:
+    """
+    检查是否包含有效的上下文信息
+    
+    Args:
+        pred_item: 预测项字典，包含input字段
+        
+    Returns:
+        (has_context_window, has_calling_functions) 元组
+    """
+    input_text = pred_item.get('input', '')
+    
+    # 检查是否有上下文窗口信息
+    has_context_window = False
+    has_calling_functions = False
+    
+    if "该测试案例在原项目中的上下文为：" in input_text:
+        # 提取上下文部分
+        context_section = input_text.split("该测试案例在原项目中的上下文为：")[1]
+        if "在原项目中，涉及到调用该测试案例的原文为：" in context_section:
+            context_content = context_section.split("在原项目中，涉及到调用该测试案例的原文为：")[0]
+        else:
+            context_content = context_section
+        
+        # 检查是否是有效内容（不是错误信息）
+        if "（无法获取上下文信息）" not in context_content and "文件路径:" in context_content:
+            has_context_window = True
+    
+    if "在原项目中，涉及到调用该测试案例的原文为：" in input_text:
+        # 提取调用函数部分
+        calling_section = input_text.split("在原项目中，涉及到调用该测试案例的原文为：")[1]
+        
+        # 检查是否是有效内容（获取前200字符检查）
+        calling_preview = calling_section[:200] if len(calling_section) > 200 else calling_section
+        if "（无法获取调用信息）" not in calling_preview and "（未找到调用该测试方法的位置）" not in calling_preview:
+            has_calling_functions = True
+    
+    return has_context_window, has_calling_functions
+
+
 class EvaluationReport:
     """评估报告类"""
     
-    def __init__(self, metrics: Dict):
+    def __init__(self, metrics: Dict, predictions: List[Dict] = None):
         """
         初始化报告
         
         Args:
             metrics: 评估指标字典
+            predictions: 预测数据列表（包含input和output字段）
         """
         self.metrics = metrics
+        self.predictions = predictions or []
     
     def print_summary(self):
         """打印评估摘要"""
@@ -112,6 +154,10 @@ class EvaluationReport:
         if 'error_cases' in self.metrics and self.metrics['error_cases']:
             self._print_error_cases()
         
+        # 上下文信息影响分析
+        if self.predictions:
+            self._analyze_context_impact()
+        
         print("=" * 70)
     
     def _print_error_cases(self):
@@ -155,6 +201,137 @@ class EvaluationReport:
             print(f"\n📊 错误类型分布:")
             for error_type, count in sorted(error_type_counts.items(), key=lambda x: x[1], reverse=True):
                 print(f"  {error_type:<30} {count:>4} 个")
+    
+    def _analyze_context_impact(self):
+        """分析上下文信息对预测准确率的影响"""
+        if not self.predictions:
+            return
+        
+        print("\n" + "="*70)
+        print("📋 上下文信息影响分析")
+        print("="*70)
+        
+        # 分类案例
+        with_context_window = []
+        without_context_window = []
+        with_calling_info = []
+        without_calling_info = []
+        with_both = []
+        with_neither = []
+        
+        # 获取错误案例ID集合
+        error_ids = set()
+        for error_case in self.metrics.get('error_cases', []):
+            error_ids.add(error_case['id'])
+        
+        # 分类每个预测
+        for pred in self.predictions:
+            pred_id = pred.get('id')
+            
+            # 检查上下文可用性
+            has_context, has_calling = check_context_availability(pred)
+            
+            # 检查预测是否正确
+            is_correct = pred_id not in error_ids
+            
+            case_info = {
+                'id': pred_id,
+                'is_correct': is_correct
+            }
+            
+            # 分类
+            if has_context:
+                with_context_window.append(case_info)
+            else:
+                without_context_window.append(case_info)
+            
+            if has_calling:
+                with_calling_info.append(case_info)
+            else:
+                without_calling_info.append(case_info)
+            
+            if has_context and has_calling:
+                with_both.append(case_info)
+            elif not has_context and not has_calling:
+                with_neither.append(case_info)
+        
+        # 计算准确率
+        def calc_accuracy(cases):
+            if not cases:
+                return 0.0
+            correct = sum(1 for c in cases if c['is_correct'])
+            return correct / len(cases) * 100
+        
+        total = len(self.predictions)
+        
+        # 打印统计信息
+        print(f"\n【上下文信息可用性】")
+        print(f"  有上下文窗口: {len(with_context_window):>3} ({len(with_context_window)/total*100:5.1f}%)")
+        print(f"  无上下文窗口: {len(without_context_window):>3} ({len(without_context_window)/total*100:5.1f}%)")
+        print(f"  有调用信息:   {len(with_calling_info):>3} ({len(with_calling_info)/total*100:5.1f}%)")
+        print(f"  无调用信息:   {len(without_calling_info):>3} ({len(without_calling_info)/total*100:5.1f}%)")
+        print(f"  两者都有:     {len(with_both):>3} ({len(with_both)/total*100:5.1f}%)")
+        print(f"  两者都无:     {len(with_neither):>3} ({len(with_neither)/total*100:5.1f}%)")
+        
+        # 计算准确率对比
+        with_context_acc = calc_accuracy(with_context_window)
+        without_context_acc = calc_accuracy(without_context_window)
+        with_calling_acc = calc_accuracy(with_calling_info)
+        without_calling_acc = calc_accuracy(without_calling_info)
+        with_both_acc = calc_accuracy(with_both)
+        with_neither_acc = calc_accuracy(with_neither)
+        
+        print(f"\n【准确率对比】")
+        
+        # 上下文窗口影响
+        if with_context_window and without_context_window:
+            diff_context = with_context_acc - without_context_acc
+            print(f"  上下文窗口:")
+            print(f"    有: {with_context_acc:5.2f}% ({len(with_context_window):>2}样本)")
+            print(f"    无: {without_context_acc:5.2f}% ({len(without_context_window):>2}样本)")
+            if abs(diff_context) >= 1.0:  # 只有差异大于1%时才显示
+                status = "✅ 提升" if diff_context > 0 else "⚠️ 下降"
+                print(f"    差异: {diff_context:+6.2f}% {status}")
+        
+        # 调用信息影响
+        if with_calling_info and without_calling_info:
+            diff_calling = with_calling_acc - without_calling_acc
+            print(f"  调用信息:")
+            print(f"    有: {with_calling_acc:5.2f}% ({len(with_calling_info):>2}样本)")
+            print(f"    无: {without_calling_acc:5.2f}% ({len(without_calling_info):>2}样本)")
+            if abs(diff_calling) >= 1.0:
+                status = "✅ 提升" if diff_calling > 0 else "⚠️ 下降"
+                print(f"    差异: {diff_calling:+6.2f}% {status}")
+        
+        # 组合效果
+        if with_both and with_neither:
+            diff_both = with_both_acc - with_neither_acc
+            print(f"  组合效果:")
+            print(f"    都有: {with_both_acc:5.2f}% ({len(with_both):>2}样本)")
+            print(f"    都无: {with_neither_acc:5.2f}% ({len(with_neither):>2}样本)")
+            if abs(diff_both) >= 1.0:
+                status = "✅ 提升" if diff_both > 0 else "⚠️ 下降"
+                print(f"    差异: {diff_both:+6.2f}% {status}")
+        
+        # 总结建议
+        print(f"\n【分析结论】")
+        if with_context_window and without_context_window:
+            if with_context_acc > without_context_acc + 5:
+                print("  ✅ 上下文窗口信息显著提升预测准确率")
+            elif with_context_acc > without_context_acc:
+                print("  ✓ 上下文窗口信息略微提升预测准确率")
+            elif with_context_acc < without_context_acc - 5:
+                print("  ⚠️ 上下文窗口信息反而降低准确率，需要优化提取质量")
+            else:
+                print("  ➖ 上下文窗口信息对准确率影响不明显")
+        
+        success_rate = len(with_context_window) / total * 100 if total > 0 else 0
+        if success_rate < 50:
+            print(f"  ⚠️ 上下文提取成功率较低({success_rate:.1f}%)，建议改进context_extractor")
+        elif success_rate < 70:
+            print(f"  ⚡ 上下文提取成功率中等({success_rate:.1f}%)，有优化空间")
+        else:
+            print(f"  ✅ 上下文提取成功率良好({success_rate:.1f}%)")
     
     def save_to_json(self, output_file: Path):
         """

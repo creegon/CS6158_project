@@ -2,6 +2,7 @@
 评估器主类
 整合所有评估功能
 """
+from datetime import datetime
 from pathlib import Path
 from typing import Union, Optional
 from evaluation.data_loader import (
@@ -40,6 +41,7 @@ class Evaluator:
         
         self.predictions = None
         self.ground_truths = None
+        self.raw_predictions = None  # 保存原始预测数据（用于上下文分析）
         self.metrics = None
         self.report = None
     
@@ -50,6 +52,13 @@ class Evaluator:
         print("=" * 70)
         
         print(f"\n📂 加载预测结果: {self.prediction_file.name}")
+        
+        # 加载原始数据（用于上下文分析）
+        import json
+        with open(self.prediction_file, 'r', encoding='utf-8') as f:
+            self.raw_predictions = json.load(f)
+        
+        # 解析预测结果
         self.predictions = load_predictions_from_alpaca(self.prediction_file)
         print(f"   ✓ 加载了 {len(self.predictions)} 条预测结果")
         
@@ -78,7 +87,9 @@ class Evaluator:
         print("=" * 70)
         
         self.metrics = calculate_metrics(self.predictions, self.ground_truths)
-        self.report = EvaluationReport(self.metrics)
+        
+        # 创建报告（传递原始预测数据以支持上下文分析）
+        self.report = EvaluationReport(self.metrics, self.raw_predictions)
         
         print("✓ 评估指标计算完成")
     
@@ -99,13 +110,15 @@ class Evaluator:
     
     def save_report(self, 
                    output_dir: Union[str, Path],
-                   report_name: str = 'evaluation_report'):
+                   report_name: str = 'evaluation_report',
+                   add_timestamp: bool = True):
         """
         保存评估报告
         
         Args:
             output_dir: 输出目录
             report_name: 报告文件名（不含扩展名）
+            add_timestamp: 是否在文件名中添加时间戳
         """
         if self.report is None:
             self.evaluate()
@@ -113,12 +126,19 @@ class Evaluator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # 添加时间戳
+        if add_timestamp:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_name_with_timestamp = f"{report_name}_{timestamp}"
+        else:
+            report_name_with_timestamp = report_name
+        
         # 保存JSON格式
-        json_file = output_dir / f"{report_name}.json"
+        json_file = output_dir / f"{report_name_with_timestamp}.json"
         self.report.save_to_json(json_file)
         
         # 保存文本格式
-        txt_file = output_dir / f"{report_name}.txt"
+        txt_file = output_dir / f"{report_name_with_timestamp}.txt"
         self.report.save_to_text(txt_file)
     
     def run(self, 

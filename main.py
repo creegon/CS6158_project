@@ -13,7 +13,7 @@ from agents import DistillationAgent, DataExplainerAgent
 from evaluation import Evaluator
 from utils import (load_csv, split_dataset, save_split_datasets, 
                    create_project_wise_kfold_splits, save_kfold_datasets,
-                   APISignatureMatcher, save_config, load_config, 
+                   FacetedAPISignatureMatcher, save_config, load_config, 
                    list_saved_configs, delete_config, display_config,
                    switch_provider, get_current_config, show_current_config,
                    list_providers, get_supported_models, show_all_models)
@@ -268,7 +268,7 @@ def run_distillation():
         if use_api_matching and train_dataset:
             print("\n正在加载训练集并构建API索引...")
             train_data = load_csv(train_dataset)
-            api_matcher = APISignatureMatcher(train_data, code_column='full_code')
+            api_matcher = FacetedAPISignatureMatcher(train_data, code_column='full_code')
             
             # 显示统计信息
             stats = api_matcher.get_statistics()

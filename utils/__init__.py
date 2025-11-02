@@ -31,6 +31,8 @@ from .prompt_utils import (
 
 # API匹配器
 from .api_matcher import APISignatureMatcher
+from .faceted_api_matcher import FacetedAPISignatureMatcher, CodeFacets
+from .context_extractor import ProjectContextFetcher
 
 # 配置管理
 from .config_manager import (
@@ -72,6 +74,9 @@ __all__ = [
     'save_prompt',
     # api_matcher
     'APISignatureMatcher',
+    'FacetedAPISignatureMatcher',
+    'CodeFacets',
+    'ProjectContextFetcher',
     # config_manager
     'save_config',
     'load_config',

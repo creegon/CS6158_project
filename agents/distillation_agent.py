@@ -3,6 +3,7 @@ DistillationAgent - 数据蒸馏Agent
 用于生成包含推理过程的训练数据集
 """
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, List, Dict
 from tqdm import tqdm
@@ -17,7 +18,8 @@ from utils import (
     convert_to_alpaca_format,
     save_json,
     load_prompt,
-    format_prompt
+    format_prompt,
+    ProjectContextFetcher
 )
 from config import (
     DATASET_PATH,
@@ -86,6 +88,9 @@ class DistillationAgent(BaseAgent):
         self.api_matcher = api_matcher
         self.top_k_shots = top_k_shots if api_matcher else 0
         
+        # Context提取器
+        self.context_fetcher = ProjectContextFetcher()
+        
         # 加载prompt模板
         self.system_prompt = load_prompt('distillation_system')
         self.user_template = load_prompt('distillation_user')
@@ -128,15 +133,8 @@ class DistillationAgent(BaseAgent):
         project = row.get('project', 'Unknown')
         test_name = row.get('test_name', 'Unknown')
         
-        # 基础prompt
-        base_prompt = format_prompt(
-            self.user_template, 
-            project=project,
-            test_name=test_name,
-            full_code=full_code
-        )
-        
         few_shot_examples = None
+        few_shots_text = ""
         
         # 如果启用API匹配，添加few-shot examples
         if self.api_matcher and self.top_k_shots > 0:
@@ -163,31 +161,78 @@ class DistillationAgent(BaseAgent):
                             example_info['id'] = int(case_row['id'])
                         few_shot_examples.append(example_info)
                     
-                    # 构建few-shot examples文本（插入prompt）
-                    examples_text = "\n\n参考案例（根据API签名相似度检索）：\n"
-                    examples_text += "=" * 60 + "\n"
-                    
+                    # 构建few-shot examples文本（用于模板替换）
+                    examples_parts = []
                     for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
                         case_code = case_row.get(self.code_column, case_row.get('full_code', ''))
                         case_label = case_row.get('label', 'Unknown')
                         case_project = case_row.get('project', 'Unknown')
+                        case_test_name = case_row.get('test_name', 'Unknown')
                         
-                        examples_text += f"\n【案例 {i}】(相似度: {similarity:.2f})\n"
-                        examples_text += f"项目: {case_project}\n"
-                        examples_text += f"标签: {case_label}\n"
-                        examples_text += f"代码:\n{case_code}\n"
-                        examples_text += "-" * 60 + "\n"
+                        example = f"""【案例 {i}】(相似度: {similarity:.2f})
+项目: {case_project}
+测试名称: {case_test_name}
+标签: {case_label}
+代码:
+{case_code}
+{'-' * 60}"""
+                        examples_parts.append(example)
                     
-                    # 将few-shot examples插入到prompt中
-                    # 在原始代码之前插入参考案例
-                    base_prompt = base_prompt.replace(
-                        full_code,
-                        examples_text + "\n待分析的测试代码:\n" + full_code
-                    )
+                    few_shots_text = "\n".join(examples_parts)
             
             except Exception as e:
                 print(f"⚠ API匹配失败: {e}")
-                # 如果匹配失败，继续使用基础prompt
+                few_shots_text = "（未检索到相似案例）"
+        else:
+            few_shots_text = "（未启用few-shot检索）"
+        
+        # 提取项目上下文信息
+        context_windows_text = ""
+        calling_functions_text = ""
+        
+        try:
+            context_info = self.context_fetcher.get_test_context(
+                project=project,
+                test_name=test_name,
+                context_lines=20,
+                invocation_limit=10
+            )
+            
+            # 格式化surrounding_window
+            if context_info.get('surrounding_window'):
+                context_windows_text = f"""文件路径: {context_info['file_path']}
+类名: {context_info['class_name']}
+方法名: {context_info['method_name']}
+
+上下文代码:
+{context_info['surrounding_window']}"""
+            
+            # 格式化invocations
+            if context_info.get('invocations'):
+                invocations_list = []
+                for i, inv in enumerate(context_info['invocations'], 1):
+                    invocations_list.append(
+                        f"[{i}] {inv['file_path']}:{inv['line_number']}\n    {inv['line_preview']}"
+                    )
+                calling_functions_text = "\n".join(invocations_list)
+            else:
+                calling_functions_text = "（未找到调用该测试方法的位置）"
+                
+        except Exception as e:
+            print(f"⚠ 提取上下文信息失败 ({project}/{test_name}): {e}")
+            context_windows_text = "（无法获取上下文信息）"
+            calling_functions_text = "（无法获取调用信息）"
+        
+        # 最后一次性格式化prompt，包含所有参数
+        base_prompt = format_prompt(
+            self.user_template, 
+            project=project,
+            test_name=test_name,
+            full_code=full_code,
+            few_shots=few_shots_text,
+            context_windows=context_windows_text,
+            calling_functions=calling_functions_text
+        )
         
         return base_prompt, few_shot_examples
     
@@ -215,14 +260,14 @@ class DistillationAgent(BaseAgent):
                 self.failed_indices.append(idx)
             return None
         
-        # 转换为Alpaca格式，传入 system_prompt、user_template 和 few_shot_examples
+        # 转换为Alpaca格式，直接传入已生成的 user_prompt
         alpaca_item = convert_to_alpaca_format(
             row, 
             reasoning, 
             self.code_column, 
             include_id=include_id,
             system_prompt=self.system_prompt,
-            user_template=self.user_template,
+            user_prompt=user_prompt,  # 直接传入已生成的prompt
             few_shot_examples=few_shot_examples
         )
         return alpaca_item
@@ -277,6 +322,11 @@ class DistillationAgent(BaseAgent):
         # 根据测试模式采样数据
         if self.test_mode != 'all':
             print(f"\n📊 测试模式: {self.test_mode}, 采样 {self.test_size} 条数据")
+            if self.test_mode == 'random':
+                if self.random_seed is not None:
+                    print(f"   🎲 随机种子: {self.random_seed} (可复现)")
+                else:
+                    print(f"   ⚠️  未设置随机种子，结果不可复现")
             df = sample_data(df, mode=self.test_mode, n=self.test_size, random_seed=self.random_seed)
         
         print(f"\n🚀 开始处理 {len(df)} 条数据...")
@@ -303,12 +353,16 @@ class DistillationAgent(BaseAgent):
         
         elapsed_time = time.time() - start_time
         
+        # 生成带时间戳的文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_name_with_timestamp = f"{output_name}_{timestamp}"
+        
         # 保存结果
         # 如果使用了API匹配，数据已包含id和few_shot_examples，保存为external版本
         # 否则只保存标准版本
         if self.api_matcher is not None:
             # 使用API匹配时，保存为external版本（包含id和few-shot examples）
-            output_file_external = self.output_dir / f"{output_name}_external.json"
+            output_file_external = self.output_dir / f"{output_name_with_timestamp}_external.json"
             save_json(self.distilled_dataset, output_file_external)
             
             # 同时保存一个不带额外信息的标准版本（用于训练）
@@ -321,11 +375,11 @@ class DistillationAgent(BaseAgent):
                     'output': item['output']
                 }
                 dataset_standard.append(standard_item)
-            output_file = self.output_dir / f"{output_name}.json"
+            output_file = self.output_dir / f"{output_name_with_timestamp}.json"
             save_json(dataset_standard, output_file)
         else:
             # 未使用API匹配时，只保存标准版本
-            output_file = self.output_dir / f"{output_name}.json"
+            output_file = self.output_dir / f"{output_name_with_timestamp}.json"
             save_json(self.distilled_dataset, output_file)
             output_file_external = None
         

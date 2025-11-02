@@ -71,3 +71,6 @@ other_materials/
 
 # configs
 configs/
+
+# big files
+external_projects/

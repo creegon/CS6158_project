@@ -6,3 +6,12 @@
 
 完整代码为：
 {full_code}
+
+检索到的相近案例有：
+{few_shots}
+
+该测试案例在原项目中的上下文为：
+{context_windows}
+
+在原项目中，涉及到调用该测试案例的原文为：
+{calling_functions}
