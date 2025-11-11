@@ -46,12 +46,15 @@ from .config_manager import (
 # 提供商管理
 from .provider_manager import (
     switch_provider,
+    switch_model,
     get_current_config,
     show_current_config,
     list_providers,
     get_supported_models,
+    get_available_models,
     validate_provider_config,
-    show_all_models
+    show_all_models,
+    list_models_by_family
 )
 
 __all__ = [
@@ -85,10 +88,13 @@ __all__ = [
     'display_config',
     # provider_manager
     'switch_provider',
+    'switch_model',
     'get_current_config',
     'show_current_config',
     'list_providers',
     'get_supported_models',
+    'get_available_models',
     'validate_provider_config',
     'show_all_models',
+    'list_models_by_family',
 ]

@@ -465,7 +465,7 @@ for fold in range(1, 6):
 
 ## 🤖 多模型支持
 
-系统支持多个 API 提供商，可以灵活切换。
+系统支持多个 API 提供商，可以灵活切换，并提供智能的模型管理功能。
 
 ### 支持的提供商
 
@@ -475,83 +475,167 @@ for fold in range(1, 6):
 - **适用**: 生产环境、大规模处理
 
 #### 2. SiliconFlow
-- **模型**: Qwen 系列、GLM、Yi 等
-- **特点**: 模型选择多、开源友好
+- **模型**: Llama 3.1/3.2 系列
+- **特点**: 开源模型、性能优异
 - **适用**: 实验对比、多模型测试
 
-### 快速切换
+### 🆕 智能模型管理
 
-**方式1: 使用切换工具（推荐）**
+**新功能**: 现在可以精确指定要使用的模型，而不仅仅是提供商！
+
+#### CLI工具（推荐）
+
 ```bash
-# 切换到 SiliconFlow
-python switch_provider.py siliconflow
+# 查看当前配置
+python model_cli.py show
 
-# 切换到 DeepSeek
-python switch_provider.py deepseek
+# 列出所有可用模型
+python model_cli.py list
+
+# 搜索特定模型
+python model_cli.py list --search llama
+
+# 按系列分组显示
+python model_cli.py list --family
+
+# 切换到指定模型
+python model_cli.py switch --model "meta-llama/Meta-Llama-3.1-70B-Instruct"
+
+# 切换提供商（使用默认模型）
+python model_cli.py switch --provider deepseek
+
+# 交互式选择模型
+python model_cli.py interactive
+```
+
+#### Python API
+
+```python
+from utils import (
+    show_current_config,
+    show_all_models, 
+    switch_model,
+    switch_provider,
+    get_available_models
+)
 
 # 查看当前配置
-python switch_provider.py status
+show_current_config()
+
+# 列出所有模型
+show_all_models()
+
+# 切换到特定模型（保持当前提供商）
+switch_model('meta-llama/Meta-Llama-3.1-70B-Instruct')
+
+# 同时切换提供商和模型
+switch_provider('siliconflow', model='meta-llama/Llama-3.2-3B-Instruct')
+
+# 编程方式获取模型列表
+models = get_available_models('siliconflow')
+for model in models:
+    print(f"  • {model}")
 ```
 
-**方式2: 通过主菜单**
-```bash
-python main.py
-# 选择 "6. 模型设置"
-# 选择 "1. 切换提供商"
-```
+### 可用模型列表
 
-**方式3: 编程方式**
-```python
-from agents import DistillationAgent
+#### DeepSeek
+- `deepseek-chat` - 通用对话模型
+- `deepseek-coder` - 代码专用模型
 
-# 显式指定提供商
-agent = DistillationAgent(
-    provider='siliconflow',
-    model='Qwen/Qwen2.5-7B-Instruct',
-    test_mode='last',
-    test_size=10
-)
-result = agent.run()
-```
+#### SiliconFlow (Llama系列)
+- `meta-llama/Meta-Llama-3.1-8B-Instruct` - 轻量级，适合快速实验
+- `meta-llama/Meta-Llama-3.1-70B-Instruct` - 高性能，推荐使用
+- `meta-llama/Meta-Llama-3.1-405B-Instruct` - 最强性能，成本较高
+- `meta-llama/Llama-3.2-1B-Instruct` - 超轻量级
+- `meta-llama/Llama-3.2-3B-Instruct` - 轻量级
 
-### SiliconFlow 支持的模型
+💡 **提示**: 系统支持从外部配置文件（如 MaiBot 的 `model_config.toml`）自动加载更多模型。
 
-```python
-# Qwen 系列（推荐）
-'Qwen/Qwen2.5-7B-Instruct'      # 默认，性能均衡
-'Qwen/Qwen2.5-14B-Instruct'     # 中等规模，效果更好
-'Qwen/Qwen2.5-32B-Instruct'     # 大规模模型
-'Qwen/Qwen2.5-72B-Instruct'     # 最强模型
+### 模型选择指南
 
-# 其他模型
-'THUDM/glm-4-9b-chat'           # ChatGLM4
-'01-ai/Yi-1.5-9B-Chat-16K'      # Yi 模型
-'deepseek-ai/DeepSeek-V2.5'     # DeepSeek（通过 SiliconFlow）
-```
+| 使用场景 | 推荐模型 | 原因 |
+|---------|---------|------|
+| 快速原型 | Llama-3.2-3B | 速度快，成本低 |
+| 日常实验 | Meta-Llama-3.1-8B | 性能均衡 |
+| 生产环境 | Meta-Llama-3.1-70B | 高质量输出 |
+| 极致性能 | Meta-Llama-3.1-405B | 最佳效果 |
+| 代码任务 | deepseek-coder | 代码优化 |
 
 ### 使用示例
 
 ```python
-# 示例1: 使用 SiliconFlow 的 Qwen 模型
-agent = DistillationAgent(
-    provider='siliconflow',
-    model='Qwen/Qwen2.5-14B-Instruct',
-    test_mode='all',
-    parallel_workers=5
-)
-result = agent.run(output_name='qwen_result')
+# 示例1: 使用 CLI 快速切换
+# 查看可用模型并切换
+!python model_cli.py list
+!python model_cli.py switch --model "meta-llama/Meta-Llama-3.1-70B-Instruct"
 
-# 示例2: 对比不同提供商
-providers = [
-    ('deepseek', 'deepseek-chat'),
-    ('siliconflow', 'Qwen/Qwen2.5-7B-Instruct')
+# 示例2: 编程方式切换模型
+from agents import DistillationAgent
+from utils import switch_model
+
+# 切换到Llama 70B
+switch_model('meta-llama/Meta-Llama-3.1-70B-Instruct')
+
+# 使用切换后的模型
+agent = DistillationAgent(
+    test_mode='random',
+    test_size=100
+)
+result = agent.run(output_name='llama70b_result')
+
+# 示例3: 对比不同模型
+from utils import get_available_models, switch_model
+
+models_to_test = [
+    'meta-llama/Llama-3.2-3B-Instruct',
+    'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    'meta-llama/Meta-Llama-3.1-70B-Instruct'
 ]
 
-for provider, model in providers:
-    agent = DistillationAgent(
-        provider=provider,
-        model=model,
-        test_mode='first',
+for model in models_to_test:
+    print(f"\n测试模型: {model}")
+    switch_model(model)
+    
+    agent = DistillationAgent(test_mode='random', test_size=50)
+    result = agent.run(output_name=f"test_{model.split('/')[-1]}")
+    print(f"完成: {result}")
+
+# 示例4: 智能选择模型
+def select_best_model_for_task(task_size='medium'):
+    """根据任务规模智能选择模型"""
+    size_map = {
+        'small': 'meta-llama/Llama-3.2-3B-Instruct',
+        'medium': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+        'large': 'meta-llama/Meta-Llama-3.1-70B-Instruct'
+    }
+    
+    model = size_map.get(task_size, size_map['medium'])
+    switch_model(model)
+    return model
+
+# 使用
+best_model = select_best_model_for_task('large')
+print(f"为大型任务选择了: {best_model}")
+```
+
+### 配置持久化
+
+模型切换会自动更新 `.env` 文件，下次运行时会使用上次选择的模型：
+
+```env
+# .env 文件示例
+CURRENT_PROVIDER=siliconflow
+CURRENT_MODEL=meta-llama/Meta-Llama-3.1-70B-Instruct
+```
+
+### 详细文档
+
+更多关于模型管理的详细信息，请参考：
+- 📖 [模型管理完整指南](docs/MODEL_MANAGEMENT_GUIDE.md)
+- 💡 [模型管理示例](examples/model_management_example.py)
+
+---
         test_size=10
     )
     result = agent.run(output_name=f'{provider}_test')
