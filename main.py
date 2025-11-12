@@ -146,6 +146,7 @@ def run_distillation():
                             use_api_matching = config.get('use_api_matching', False)
                             top_k_shots = config.get('top_k_shots', 3)
                             use_context = config.get('use_context', False)
+                            use_feature_hint = config.get('use_feature_hint', True)  # 默认启用
                             mode = config.get('mode', 'random')
                             test_size = config.get('test_size', 10)
                             random_seed = config.get('random_seed', 42)
@@ -192,6 +193,12 @@ def run_distillation():
             print("提示: 启用后将从external_projects中提取测试代码的上下文信息")
             use_context = input("是否启用上下文提取？(y/n, 默认n): ").strip().lower() == 'y'
             
+            # Step 3.5: 特征词频提示选项
+            print("\n【Step 3.5/7】特征词频提示")
+            print("提示: 启用后将提供基于归一化频率分析的flaky特征词频提示")
+            use_feature_hint = input("是否启用特征词频提示？(y/n, 默认y): ").strip().lower()
+            use_feature_hint = use_feature_hint != 'n'  # 默认启用
+            
             # Step 4: 选择测试模式
             print("\n【Step 4/7】测试模式")
             print("1. 最后N条")
@@ -229,6 +236,7 @@ def run_distillation():
                 'use_api_matching': use_api_matching,
                 'top_k_shots': top_k_shots,
                 'use_context': use_context,
+                'use_feature_hint': use_feature_hint,
                 'mode': mode,
                 'test_size': test_size,
                 'random_seed': random_seed,
@@ -256,6 +264,7 @@ def run_distillation():
         else:
             print("API匹配: 关闭")
         print(f"上下文提取: {'开启' if use_context else '关闭'}")
+        print(f"特征词频提示: {'开启' if use_feature_hint else '关闭'}")
         print(f"测试模式: {mode}")
         print(f"数据量: {test_size if test_size else '全部'}")
         print(f"随机种子: {random_seed}")
@@ -306,7 +315,8 @@ def run_distillation():
             parallel_workers=parallel_workers,
             api_matcher=api_matcher,
             top_k_shots=top_k_shots if use_api_matching else 0,
-            use_context=use_context
+            use_context=use_context,
+            use_feature_hint=use_feature_hint
         )
         
         # 构建输出文件名
@@ -320,6 +330,8 @@ def run_distillation():
             output_name_parts.append(f'api_top{top_k_shots}')
         if use_context:
             output_name_parts.append('context')
+        if use_feature_hint:
+            output_name_parts.append('feature')
         output_name_parts.append(f'p{parallel_workers}')
         
         output_name = '_'.join(output_name_parts)

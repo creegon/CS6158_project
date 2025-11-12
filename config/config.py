@@ -47,10 +47,20 @@ def get_api_config(provider: str = None):
     """
     provider = provider or CURRENT_PROVIDER
     
+    # 默认模型配置
+    default_models = {
+        "deepseek": "deepseek-chat",
+        "siliconflow": "Qwen/Qwen2.5-7B-Instruct"
+    }
+    
     if provider.lower() == "deepseek":
-        return DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, "deepseek-chat"
+        # 优先从环境变量读取自定义模型,否则使用默认模型
+        model = os.getenv("CURRENT_MODEL", default_models["deepseek"])
+        return DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, model
     elif provider.lower() == "siliconflow":
-        return SILICONFLOW_API_KEY, SILICONFLOW_BASE_URL, "Qwen/Qwen2.5-7B-Instruct"
+        # 优先从环境变量读取自定义模型,否则使用默认模型
+        model = os.getenv("CURRENT_MODEL", default_models["siliconflow"])
+        return SILICONFLOW_API_KEY, SILICONFLOW_BASE_URL, model
     else:
         raise ValueError(f"不支持的提供商: {provider}")
 

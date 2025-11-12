@@ -15,3 +15,6 @@
 
 在原项目中，涉及到调用该测试案例的原文为：
 {calling_functions}
+
+词频分析提示：
+{feature_hints}

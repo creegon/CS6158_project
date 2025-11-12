@@ -108,17 +108,76 @@ class Evaluator:
         else:
             self.report.print_summary()
     
+    def _generate_report_name_from_prediction_file(self, output_dir: Path) -> str:
+        """
+        从预测文件名生成报告名称
+        
+        格式: {provider_abbr}_{sample_size}_{features}
+        例如: ds_100_api_context, sf_50_api
+        
+        如果文件已存在，自动添加数字后缀 (2, 3, 4...)
+        """
+        from config import CURRENT_PROVIDER
+        
+        # 提供商缩写
+        provider_map = {
+            'deepseek': 'ds',
+            'siliconflow': 'sf'
+        }
+        provider_abbr = provider_map.get(CURRENT_PROVIDER.lower(), 'eval')
+        
+        # 从预测文件名提取信息
+        pred_name = self.prediction_file.stem  # 去掉扩展名
+        pred_name = pred_name.replace('_external', '')  # 去掉 _external 后缀
+        
+        # 提取样本数量 (多种模式)
+        # 1. XX_samples 或 XXsamples
+        # 2. distillation_XX_api 中的 XX
+        import re
+        sample_match = re.search(r'(\d+)_?samples?', pred_name, re.IGNORECASE)
+        if not sample_match:
+            # 尝试查找 distillation_数字_ 模式
+            sample_match = re.search(r'distillation_(\d+)', pred_name, re.IGNORECASE)
+        sample_size = sample_match.group(1) if sample_match else None
+        
+        # 识别特征标记
+        features = []
+        feature_keywords = ['api', 'context', 'feature', 'fre', 'external']
+        for keyword in feature_keywords:
+            if keyword in pred_name.lower():
+                features.append(keyword)
+        
+        # 构建基础名称
+        if sample_size:
+            base_name = f"{provider_abbr}_{sample_size}"
+        else:
+            base_name = f"{provider_abbr}"
+        
+        # 添加特征标记
+        if features:
+            base_name = f"{base_name}_{'_'.join(features)}"
+        
+        # 检查重复，添加数字后缀
+        final_name = base_name
+        counter = 2
+        while (output_dir / f"{final_name}.json").exists() or \
+              (output_dir / f"{final_name}.txt").exists():
+            final_name = f"{base_name}{counter}"
+            counter += 1
+        
+        return final_name
+    
     def save_report(self, 
                    output_dir: Union[str, Path],
-                   report_name: str = 'evaluation_report',
-                   add_timestamp: bool = True):
+                   report_name: str = None,
+                   add_timestamp: bool = False):
         """
         保存评估报告
         
         Args:
             output_dir: 输出目录
-            report_name: 报告文件名（不含扩展名）
-            add_timestamp: 是否在文件名中添加时间戳
+            report_name: 报告文件名（不含扩展名），如果为None则自动生成
+            add_timestamp: 是否在文件名中添加时间戳（默认False）
         """
         if self.report is None:
             self.evaluate()
@@ -126,7 +185,11 @@ class Evaluator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 添加时间戳
+        # 自动生成报告名称
+        if report_name is None:
+            report_name = self._generate_report_name_from_prediction_file(output_dir)
+        
+        # 添加时间戳（通常不需要，因为已经有重复检测）
         if add_timestamp:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             report_name_with_timestamp = f"{report_name}_{timestamp}"

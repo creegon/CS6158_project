@@ -133,6 +133,12 @@ def display_config(config: Dict) -> None:
     # 任务类型
     print(f"任务类型: {config.get('task_type', 'Unknown')}")
     
+    # API配置
+    provider = config.get('provider', 'Unknown')
+    model = config.get('model', 'Unknown')
+    print(f"API提供商: {provider}")
+    print(f"模型: {model}")
+    
     # 数据集
     test_dataset = config.get('test_dataset', 'Unknown')
     if isinstance(test_dataset, Path):
@@ -150,6 +156,18 @@ def display_config(config: Dict) -> None:
         print(f"API匹配: 开启 (Top-{config.get('top_k_shots', 3)} few-shots)")
     else:
         print("API匹配: 关闭")
+    
+    # 特征词频提示
+    if config.get('use_feature_hint'):
+        print(f"词频提示: 开启")
+    else:
+        print("词频提示: 关闭")
+    
+    # 外部项目
+    if config.get('use_external_projects'):
+        print(f"外部项目: 开启 (Top-{config.get('external_top_k', 5)})")
+    else:
+        print("外部项目: 关闭")
     
     # 测试模式
     mode = config.get('mode', 'Unknown')

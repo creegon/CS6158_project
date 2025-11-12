@@ -26,8 +26,10 @@ from config import (
     OUTPUT_DIR,
     API_BATCH_SIZE,
     API_BATCH_DELAY,
-    CHECKPOINT_INTERVAL
+    CHECKPOINT_INTERVAL,
+    PROJECT_ROOT
 )
+from utils.feature_matcher import FeatureMatcher
 
 
 class DistillationAgent(BaseAgent):
@@ -50,6 +52,7 @@ class DistillationAgent(BaseAgent):
                  api_matcher=None,
                  top_k_shots: int = 3,
                  use_context: bool = False,
+                 use_feature_hint: bool = True,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -68,6 +71,7 @@ class DistillationAgent(BaseAgent):
             api_matcher: API签名匹配器，用于检索few-shot examples
             top_k_shots: 使用的few-shot样本数量
             use_context: 是否启用上下文提取(从external_projects中提取)
+            use_feature_hint: 是否启用特征词频提示(基于归一化频率分析)
             **kwargs: 传递给BaseAgent的其他参数
         """
         super().__init__(**kwargs)
@@ -93,6 +97,23 @@ class DistillationAgent(BaseAgent):
         # Context提取器 (仅在需要时初始化)
         self.use_context = use_context
         self.context_fetcher = ProjectContextFetcher() if use_context else None
+        
+        # 特征匹配器 (仅在需要时初始化)
+        self.use_feature_hint = use_feature_hint
+        self.feature_matcher = None
+        if use_feature_hint:
+            try:
+                lookup_path = PROJECT_ROOT / 'output' / 'facet_analysis' / 'feature_lookup_table.json'
+                if lookup_path.exists():
+                    self.feature_matcher = FeatureMatcher(str(lookup_path))
+                    print(f"✓ 特征匹配器已加载")
+                else:
+                    print(f"⚠️ 特征查找表不存在: {lookup_path}")
+                    print("   提示: 运行 python analyze_normalized_features.py 生成特征表")
+                    self.use_feature_hint = False
+            except Exception as e:
+                print(f"⚠️ 加载特征匹配器失败: {e}")
+                self.use_feature_hint = False
         
         # 加载prompt模板
         self.system_prompt = load_prompt('distillation_system')
@@ -231,6 +252,47 @@ class DistillationAgent(BaseAgent):
             context_windows_text = "（未启用上下文提取）"
             calling_functions_text = "（未启用上下文提取）"
         
+        # 生成特征词频提示 (仅在启用时)
+        feature_hint_text = ""
+        if self.use_feature_hint and self.feature_matcher:
+            try:
+                # 获取匹配的特征
+                matches = self.feature_matcher.match_features(full_code)
+                
+                if matches:
+                    hint_parts = []
+                    hint_parts.append("下面是一些给你提供的flaky种类的词频提示，包括它的类别以及它相对于non flaky的倍率。倍率越大就越有可能是对应的种类。可能会同时有很多种种类，这时，你需要结合你原有的判断去完成。并且，它们只是参考，你最终还是要依据题目本身做出逻辑分析和回答。\n")
+                    
+                    # 按类别组织提示
+                    for category, levels in matches.items():
+                        category_features = []
+                        
+                        # 优先级: unique > very_strong > strong > moderate
+                        for level in ['unique', 'very_strong', 'strong', 'moderate']:
+                            if levels[level]:
+                                # 按区分度和密度排序,取前3个
+                                features = sorted(levels[level],
+                                                key=lambda x: (x['discrimination'], x['flaky_density']),
+                                                reverse=True)[:3]
+                                
+                                for feat in features:
+                                    disc_str = '∞' if feat['discrimination'] == float('inf') else f"{feat['discrimination']:.1f}x"
+                                    category_features.append(
+                                        f"【{feat['feature']}】: 它的类别是【{category}】，它的词频倍率是【{disc_str}】"
+                                    )
+                        
+                        if category_features:
+                            hint_parts.extend(category_features)
+                    
+                    if len(hint_parts) > 1:  # 除了开头说明,还有实际特征
+                        feature_hint_text = "\n".join(hint_parts)
+                    
+            except Exception as e:
+                print(f"⚠ 生成特征提示失败: {e}")
+        
+        if not feature_hint_text:
+            feature_hint_text = "（未提供词频提示）"
+        
         # 最后一次性格式化prompt，包含所有参数
         base_prompt = format_prompt(
             self.user_template, 
@@ -239,7 +301,8 @@ class DistillationAgent(BaseAgent):
             full_code=full_code,
             few_shots=few_shots_text,
             context_windows=context_windows_text,
-            calling_functions=calling_functions_text
+            calling_functions=calling_functions_text,
+            feature_hints=feature_hint_text
         )
         
         return base_prompt, few_shot_examples

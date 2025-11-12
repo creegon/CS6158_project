@@ -56,10 +56,11 @@ class BaseAgent(ABC):
             self.model = model or provider_model
             self.provider = provider
         else:
-            # 使用默认配置
-            self.api_key = api_key or DEEPSEEK_API_KEY
-            self.base_url = base_url or DEEPSEEK_BASE_URL
-            self.model = model or DEFAULT_MODEL
+            # 使用当前配置的提供商
+            provider_api_key, provider_base_url, provider_model = get_api_config(CURRENT_PROVIDER)
+            self.api_key = api_key or provider_api_key
+            self.base_url = base_url or provider_base_url
+            self.model = model or provider_model
             self.provider = CURRENT_PROVIDER
             
         self.temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE

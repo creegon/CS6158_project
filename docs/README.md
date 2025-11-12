@@ -31,18 +31,32 @@
    - Few-shot样本检索
    - 使用方法和示例
 
-5. **[FEW_SHOT_RECORDING.md](./FEW_SHOT_RECORDING.md)**
+5. **[FEATURE_ANALYSIS_GUIDE.md](./FEATURE_ANALYSIS_GUIDE.md)** ✨ 新增
+   - 特征词频分析系统
+   - 标准化频率和区分度计算
+   - 特征提示集成到LLM
+   - 数据驱动的分类增强
+
+6. **[FACETED_SEARCH_GUIDE.md](./FACETED_SEARCH_GUIDE.md)**
+   - 分面API匹配器
+   - 基于类别的特征搜索
+
+7. **[FEW_SHOT_RECORDING.md](./FEW_SHOT_RECORDING.md)**
    - Few-shot examples记录
    - 训练数据追踪
    - 样本质量分析
 
-6. **[QUICK_START_API_MATCHING.md](./QUICK_START_API_MATCHING.md)**
+8. **[QUICK_START_API_MATCHING.md](./QUICK_START_API_MATCHING.md)**
    - API匹配快速入门
    - 配置和使用示例
 
-7. **[SILICONFLOW_GUIDE.md](./SILICONFLOW_GUIDE.md)**
+9. **[SILICONFLOW_GUIDE.md](./SILICONFLOW_GUIDE.md)**
    - SiliconFlow API使用指南
    - 模型配置
+
+10. **[KFOLD_VALIDATION_DESIGN.md](./KFOLD_VALIDATION_DESIGN.md)**
+    - K-fold交叉验证设计
+    - 数据集划分策略
 
 ## 🎯 阅读建议
 
@@ -59,6 +73,9 @@
 
 **使用API匹配功能**
 → 阅读 [API_MATCHING.md](./API_MATCHING.md) 或 [QUICK_START_API_MATCHING.md](./QUICK_START_API_MATCHING.md)
+
+**使用特征词频分析** ✨
+→ 阅读 [FEATURE_ANALYSIS_GUIDE.md](./FEATURE_ANALYSIS_GUIDE.md)
 
 **配置不同的API提供商**
 → 阅读 [SILICONFLOW_GUIDE.md](./SILICONFLOW_GUIDE.md)

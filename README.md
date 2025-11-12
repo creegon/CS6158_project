@@ -12,12 +12,14 @@
 - 📂 **灵活数据管理**：支持自定义训练集/测试集，完美适配K-fold交叉验证
 - 💾 **配置复用**：保存和加载实验配置，快速切换不同实验设置
 - 📝 **Few-shot增强**：自动检索相似案例，提供标签和相似度元数据
+- 🎯 **特征词频提示**：基于标准化词频分析，提供数据驱动的分类提示
 
 ## 目录
 
 - [项目结构](#-项目结构)
 - [快速开始](#-快速开始)
 - [核心模块说明](#-核心模块说明)
+- [特征分析工具](#4-特征分析工具-utils)
 - [使用场景](#-使用场景)
 - [多模型支持](#-多模型支持)
 - [测试指南](#-测试指南)
@@ -51,9 +53,14 @@ CS6158 project/
 │   │   ├── data_converter.py   # Alpaca格式转换
 │   │   └── data_statistics.py  # 数据统计信息
 │   ├── api_matcher.py          # API签名匹配器
+│   ├── faceted_api_matcher.py  # 分面API匹配器
+│   ├── feature_matcher.py      # 特征词频匹配器（新增）
+│   ├── analyze_category_keywords.py  # 关键词分析工具（新增）
+│   ├── analyze_normalized_features.py # 标准化特征分析（新增）
 │   ├── config_manager.py       # 配置管理
-│   ├── provider_manager.py     # 提供商管理（新增）
+│   ├── provider_manager.py     # 提供商管理
 │   ├── prompt_utils.py         # Prompt处理工具
+│   ├── context_extractor.py    # 外部项目上下文提取
 │   └── evaluation_utils.py     # 评估工具函数
 │
 ├── agents/                      # Agent模块
@@ -316,7 +323,86 @@ tasks = [
 results = coordinator.execute(tasks)
 ```
 
-### 4. Evaluation模块 (`evaluation/`)
+### 4. 特征分析工具 (`utils/`)
+
+#### analyze_category_keywords.py - 关键词频率分析
+
+从训练数据中提取各类别的关键词频率,生成统计报告。
+
+**主要功能:**
+- 提取标识符、方法调用、类名等代码特征
+- 统计各flaky类别和non-flaky的关键词出现频率
+- 生成可读性报告和JSON数据
+
+**使用方法:**
+```bash
+python utils/analyze_category_keywords.py
+```
+
+**输出:**
+- `output/facet_analysis/analysis_report.txt` - 可读性报告
+- `output/facet_analysis/category_keywords.json` - JSON格式数据
+
+#### analyze_normalized_features.py - 标准化特征分析 ✨
+
+计算标准化词频(密度)和区分度得分,识别高区分度特征。
+
+**核心算法:**
+- **密度计算**: `density = count / sample_count` (消除样本量影响)
+- **区分度**: `discrimination = flaky_density / nonflaky_density`
+- **特征分级**: 
+  - Unique: ∞倍 (仅在flaky中出现)
+  - Very Strong: 20x+ 
+  - Strong: 10-20x
+  - Moderate: 5-10x
+
+**使用方法:**
+```bash
+python utils/analyze_normalized_features.py
+```
+
+**输出:**
+- `normalized_features.json` - 完整的标准化统计
+- `feature_lookup_table.json` - 用于特征匹配的查找表
+- `normalized_analysis_report.txt` - 可读性报告
+- `feature_statistics.json` - 特征分级统计
+
+#### feature_matcher.py - 特征词频匹配器 ✨
+
+从代码中提取特征并匹配到词频查找表,生成提示信息。
+
+**主要功能:**
+- 从测试代码提取标识符、方法、类名
+- 匹配特征到预计算的词频表
+- 按优先级生成提示(unique > very_strong > strong > moderate)
+- 格式化为LLM可理解的提示文本
+
+**集成使用 (已集成到DistillationAgent):**
+```python
+from utils.feature_matcher import FeatureMatcher
+
+matcher = FeatureMatcher('output/facet_analysis/feature_lookup_table.json')
+hint = matcher.generate_prompt_hint(test_code, max_features_per_level=3)
+```
+
+**独立测试:**
+```bash
+python utils/feature_matcher.py  # 运行演示
+```
+
+**提示格式:**
+```
+【sleep】: 它的类别是【async wait】，它的词频倍率是【28.4x】
+【Thread】: 它的类别是【concurrency】，它的词频倍率是【40.0x】
+```
+
+**工作流程:**
+1. 运行 `analyze_normalized_features.py` 生成 `feature_lookup_table.json`
+2. `DistillationAgent` 自动加载查找表
+3. 在生成prompt时,提取测试代码特征并生成词频提示
+4. LLM基于词频提示进行更准确的分类
+
+### 5. Evaluation模块 (`evaluation/`)
 
 评估模块用于评估Flaky Test分类模型的性能。
 
@@ -443,6 +529,52 @@ for fold in range(1, 6):
 ```
 
 ### 场景7: 配置复用实验 ✨ 新增
+
+```python
+from utils import save_config, load_config
+
+# 保存实验配置
+config = {
+    'task_type': 'distillation',
+    'test_dataset': Path('dataset/kfold_splits/fold_1_test.csv'),
+    'train_dataset': Path('dataset/kfold_splits/fold_1_train.csv'),
+    'use_api_matching': True,
+    'top_k_shots': 5,
+    'mode': 'all',
+    'parallel_workers': 8
+}
+save_config(config, 'my_experiment')
+
+# 稍后加载配置
+config = load_config('my_experiment')
+```
+
+### 场景8: 特征词频分析增强 ✨ 新增
+
+**Step 1: 生成特征查找表**
+```bash
+# 分析训练数据,生成标准化词频和区分度得分
+python utils/analyze_normalized_features.py
+```
+
+**Step 2: 使用特征提示进行蒸馏**
+```python
+# DistillationAgent自动加载feature_lookup_table.json
+agent = DistillationAgent(
+    dataset_path='dataset/kfold_splits/fold_1_test.csv',
+    use_feature_hint=True,  # 启用词频提示(默认开启)
+    test_mode='all',
+    parallel_workers=5
+)
+agent.run(output_name='fold_1_with_features')
+```
+
+生成的prompt会包含词频提示,例如:
+```
+下面是一些给你提供的flaky种类的词频提示...
+【sleep】: 它的类别是【async wait】，它的词频倍率是【28.4x】
+【Thread】: 它的类别是【concurrency】，它的词频倍率是【40.0x】
+```
 
 ```python
 # 第一次运行：保存配置
