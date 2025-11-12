@@ -17,7 +17,7 @@ from utils import (load_csv, split_dataset, save_split_datasets,
                    list_saved_configs, delete_config, display_config,
                    switch_provider, get_current_config, show_current_config,
                    list_providers, get_supported_models, show_all_models)
-from config import DATASET_PATH, OUTPUT_DIR
+from config import DATASET_PATH, OUTPUT_DIR, get_provider_models
 
 
 def list_available_datasets():
@@ -145,8 +145,10 @@ def run_distillation():
                             train_dataset = config.get('train_dataset')
                             use_api_matching = config.get('use_api_matching', False)
                             top_k_shots = config.get('top_k_shots', 3)
+                            use_context = config.get('use_context', False)
                             mode = config.get('mode', 'random')
                             test_size = config.get('test_size', 10)
+                            random_seed = config.get('random_seed', 42)
                             parallel_workers = config.get('parallel_workers', 5)
                             batch_size = config.get('batch_size', 5)
                     else:
@@ -166,7 +168,7 @@ def run_distillation():
             print(f"✓ 测试集: {test_dataset.name}")
             
             # Step 2: 选择训练集（可选，用于API匹配）
-            print("\n【Step 2/5】选择训练集（用于API匹配，可选）")
+            print("\n【Step 2/7】选择训练集（用于API匹配，可选）")
             print("提示: 如果选择训练集，将使用API签名匹配来检索few-shot examples")
             use_api_matching = input("是否使用API匹配？(y/n, 默认n): ").strip().lower() == 'y'
             
@@ -185,8 +187,13 @@ def run_distillation():
                     print("✓ 跳过API匹配")
                     use_api_matching = False
             
-            # Step 3: 选择测试模式
-            print("\n【Step 3/5】测试模式")
+            # Step 3: 上下文提取选项
+            print("\n【Step 3/7】上下文提取")
+            print("提示: 启用后将从external_projects中提取测试代码的上下文信息")
+            use_context = input("是否启用上下文提取？(y/n, 默认n): ").strip().lower() == 'y'
+            
+            # Step 4: 选择测试模式
+            print("\n【Step 4/7】测试模式")
             print("1. 最后N条")
             print("2. 前N条")
             print("3. 随机N条")
@@ -203,8 +210,12 @@ def run_distillation():
                 test_size = None
                 print("将处理全部数据")
             
-            # Step 4: 并行配置
-            print("\n【Step 4/5】并行配置")
+            # Step 5: 随机种子（用于随机模式的复现）
+            print("\n【Step 5/7】随机种子")
+            random_seed = int(input("请输入随机种子 (默认42，用于复现随机抽样): ").strip() or "42")
+            
+            # Step 6: 并行配置
+            print("\n【Step 6/7】并行配置")
             parallel_workers = int(input("请输入并行线程数 (1-10，默认5): ").strip() or "5")
             parallel_workers = max(1, min(10, parallel_workers))
             
@@ -217,8 +228,10 @@ def run_distillation():
                 'train_dataset': train_dataset,
                 'use_api_matching': use_api_matching,
                 'top_k_shots': top_k_shots,
+                'use_context': use_context,
                 'mode': mode,
                 'test_size': test_size,
+                'random_seed': random_seed,
                 'parallel_workers': parallel_workers,
                 'batch_size': batch_size
             }
@@ -233,8 +246,8 @@ def run_distillation():
             return
     
     try:
-        # Step 5: 确认配置
-        print("\n【Step 5/5】配置确认")
+        # Step 7: 确认配置
+        print("\n【Step 7/7】配置确认")
         print("=" * 60)
         print(f"测试集: {test_dataset.name}")
         if use_api_matching and train_dataset:
@@ -242,8 +255,10 @@ def run_distillation():
             print(f"API匹配: 开启 (Top-{top_k_shots} few-shots)")
         else:
             print("API匹配: 关闭")
+        print(f"上下文提取: {'开启' if use_context else '关闭'}")
         print(f"测试模式: {mode}")
         print(f"数据量: {test_size if test_size else '全部'}")
+        print(f"随机种子: {random_seed}")
         print(f"并行线程: {parallel_workers}")
         print(f"批次大小: {batch_size}")
         print("=" * 60)
@@ -285,11 +300,13 @@ def run_distillation():
             dataset_path=str(test_dataset),
             test_mode=mode,
             test_size=test_size,
+            random_seed=random_seed,
             batch_size=batch_size,
             batch_delay=0.5 if parallel_workers > 1 else 1,
             parallel_workers=parallel_workers,
             api_matcher=api_matcher,
-            top_k_shots=top_k_shots if use_api_matching else 0
+            top_k_shots=top_k_shots if use_api_matching else 0,
+            use_context=use_context
         )
         
         # 构建输出文件名
@@ -301,6 +318,8 @@ def run_distillation():
         ]
         if use_api_matching:
             output_name_parts.append(f'api_top{top_k_shots}')
+        if use_context:
+            output_name_parts.append('context')
         output_name_parts.append(f'p{parallel_workers}')
         
         output_name = '_'.join(output_name_parts)
@@ -317,6 +336,13 @@ def run_distillation():
             print(f"  - 使用训练集: {train_dataset.name}")
             print(f"  - Few-shot数量: {top_k_shots}")
             print(f"  - 知识库大小: {len(train_data)}")
+        
+        if use_context:
+            print(f"\n📁 上下文提取:")
+            print(f"  - 状态: 已启用")
+            print(f"  - 来源: external_projects/")
+        
+        print(f"\n🎲 随机种子: {random_seed} (用于复现)")
         
     except ValueError as e:
         print(f"✗ 输入错误: {e}")
@@ -681,16 +707,58 @@ def run_model_settings():
     
     print("\n" + "-" * 60)
     print("可用操作:")
-    print("  1. 切换提供商")
-    print("  2. 查看当前提供商支持的模型")
-    print("  3. 查看所有支持的模型")
+    print("  1. 切换提供商和模型（推荐）")
+    print("  2. 仅切换提供商")
+    print("  3. 查看当前提供商支持的模型")
+    print("  4. 查看所有支持的模型")
     print("  0. 返回主菜单")
     print("-" * 60)
     
     choice = input("\n请选择操作: ").strip()
     
     if choice == '1':
-        # 切换提供商
+        # 切换提供商和模型（一键完成）
+        providers = list_providers()
+        print("\n📋 可用提供商:")
+        for i, p in enumerate(providers, 1):
+            print(f"  {i}. {p.upper()}")
+        
+        try:
+            provider_idx = int(input(f"\n请选择提供商 (1-{len(providers)}): ").strip())
+            
+            if 1 <= provider_idx <= len(providers):
+                new_provider = providers[provider_idx - 1]
+                
+                # 获取该提供商支持的模型列表
+                from config import get_provider_models
+                models = get_provider_models(new_provider)
+                
+                if not models:
+                    print(f"✗ 提供商 {new_provider} 没有可用的模型")
+                    return
+                
+                print(f"\n📋 {new_provider.upper()} 支持的模型:")
+                for i, m in enumerate(models, 1):
+                    print(f"  {i}. {m}")
+                
+                model_idx = int(input(f"\n请选择模型 (1-{len(models)}, 默认1): ").strip() or "1")
+                
+                if 1 <= model_idx <= len(models):
+                    selected_model = models[model_idx - 1]
+                    
+                    # 切换提供商和模型
+                    if switch_provider(new_provider, selected_model):
+                        print(f"\n✓ 已切换到: {new_provider.upper()} - {selected_model}")
+                        print("⚠️  请重启程序以使更改生效")
+                else:
+                    print("✗ 无效的模型选择")
+            else:
+                print("✗ 无效的提供商选择")
+        except ValueError:
+            print("✗ 请输入数字")
+    
+    elif choice == '2':
+        # 仅切换提供商（保持默认模型）
         providers = list_providers()
         print("\n📋 可用提供商:")
         for i, p in enumerate(providers, 1):
@@ -708,7 +776,7 @@ def run_model_settings():
         except ValueError:
             print("✗ 请输入数字")
     
-    elif choice == '2':
+    elif choice == '3':
         # 查看当前提供商支持的模型
         models = get_supported_models()
         print(f"\n📋 {provider.upper()} 支持的模型:")
@@ -716,10 +784,9 @@ def run_model_settings():
         for i, model in enumerate(models, 1):
             print(f"  {i}. {model}")
         
-        print("\n💡 提示: 可以在创建Agent时通过 model 参数使用指定模型")
-        print(f"   示例: DistillationAgent(model='{models[0] if models else 'model-name'}')")
+        print("\n💡 提示: 使用选项1可以直接切换到指定模型")
     
-    elif choice == '3':
+    elif choice == '4':
         # 查看所有支持的模型
         show_all_models()
     

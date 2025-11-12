@@ -69,14 +69,22 @@ SUPPORTED_MODELS = {
         "deepseek-coder"
     ],
     "siliconflow": [
-        # Llama 系列
-        "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "meta-llama/Meta-Llama-3.1-405B-Instruct",
-        "meta-llama/Llama-3.2-1B-Instruct",
-        "meta-llama/Llama-3.2-3B-Instruct",
+        "Qwen/Qwen3-8B",
     ]
 }
+
+
+def get_provider_models(provider: str) -> list:
+    """
+    获取指定提供商支持的模型列表
+    
+    Args:
+        provider: 提供商名称
+        
+    Returns:
+        模型名称列表
+    """
+    return SUPPORTED_MODELS.get(provider.lower(), [])
 
 
 # 模型配置（向后兼容）

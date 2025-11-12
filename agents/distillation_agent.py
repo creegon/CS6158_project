@@ -41,7 +41,7 @@ class DistillationAgent(BaseAgent):
                  output_dir: Optional[Union[str, Path]] = None,
                  test_mode: str = 'all',
                  test_size: int = 10,
-                 random_seed: Optional[int] = None,
+                 random_seed: Optional[int] = 42,
                  code_column: str = 'code',
                  batch_size: Optional[int] = None,
                  batch_delay: Optional[float] = None,
@@ -49,6 +49,7 @@ class DistillationAgent(BaseAgent):
                  parallel_workers: int = 1,
                  api_matcher=None,
                  top_k_shots: int = 3,
+                 use_context: bool = False,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -58,7 +59,7 @@ class DistillationAgent(BaseAgent):
             output_dir: 输出目录
             test_mode: 测试模式 ['all', 'first', 'last', 'random']
             test_size: 测试时使用的数据量
-            random_seed: 随机种子
+            random_seed: 随机种子(默认42,用于复现随机抽样)
             code_column: 代码列名
             batch_size: 批次大小
             batch_delay: 批次延迟（秒）
@@ -66,6 +67,7 @@ class DistillationAgent(BaseAgent):
             parallel_workers: 并行推理的工作线程数，1表示串行处理
             api_matcher: API签名匹配器，用于检索few-shot examples
             top_k_shots: 使用的few-shot样本数量
+            use_context: 是否启用上下文提取(从external_projects中提取)
             **kwargs: 传递给BaseAgent的其他参数
         """
         super().__init__(**kwargs)
@@ -88,8 +90,9 @@ class DistillationAgent(BaseAgent):
         self.api_matcher = api_matcher
         self.top_k_shots = top_k_shots if api_matcher else 0
         
-        # Context提取器
-        self.context_fetcher = ProjectContextFetcher()
+        # Context提取器 (仅在需要时初始化)
+        self.use_context = use_context
+        self.context_fetcher = ProjectContextFetcher() if use_context else None
         
         # 加载prompt模板
         self.system_prompt = load_prompt('distillation_system')
@@ -186,42 +189,47 @@ class DistillationAgent(BaseAgent):
         else:
             few_shots_text = "（未启用few-shot检索）"
         
-        # 提取项目上下文信息
+        # 提取项目上下文信息 (仅在启用时)
         context_windows_text = ""
         calling_functions_text = ""
         
-        try:
-            context_info = self.context_fetcher.get_test_context(
-                project=project,
-                test_name=test_name,
-                context_lines=20,
-                invocation_limit=10
-            )
-            
-            # 格式化surrounding_window
-            if context_info.get('surrounding_window'):
-                context_windows_text = f"""文件路径: {context_info['file_path']}
+        if self.use_context and self.context_fetcher:
+            try:
+                context_info = self.context_fetcher.get_test_context(
+                    project=project,
+                    test_name=test_name,
+                    context_lines=20,
+                    invocation_limit=10
+                )
+                
+                # 格式化surrounding_window
+                if context_info.get('surrounding_window'):
+                    context_windows_text = f"""文件路径: {context_info['file_path']}
 类名: {context_info['class_name']}
 方法名: {context_info['method_name']}
 
 上下文代码:
 {context_info['surrounding_window']}"""
-            
-            # 格式化invocations
-            if context_info.get('invocations'):
-                invocations_list = []
-                for i, inv in enumerate(context_info['invocations'], 1):
-                    invocations_list.append(
-                        f"[{i}] {inv['file_path']}:{inv['line_number']}\n    {inv['line_preview']}"
-                    )
-                calling_functions_text = "\n".join(invocations_list)
-            else:
-                calling_functions_text = "（未找到调用该测试方法的位置）"
                 
-        except Exception as e:
-            print(f"⚠ 提取上下文信息失败 ({project}/{test_name}): {e}")
-            context_windows_text = "（无法获取上下文信息）"
-            calling_functions_text = "（无法获取调用信息）"
+                # 格式化invocations
+                if context_info.get('invocations'):
+                    invocations_list = []
+                    for i, inv in enumerate(context_info['invocations'], 1):
+                        invocations_list.append(
+                            f"[{i}] {inv['file_path']}:{inv['line_number']}\n    {inv['line_preview']}"
+                        )
+                    calling_functions_text = "\n".join(invocations_list)
+                else:
+                    calling_functions_text = "（未找到调用该测试方法的位置）"
+                    
+            except Exception as e:
+                print(f"⚠ 提取上下文信息失败 ({project}/{test_name}): {e}")
+                context_windows_text = "（无法获取上下文信息）"
+                calling_functions_text = "（无法获取调用信息）"
+        else:
+            # 未启用上下文提取
+            context_windows_text = "（未启用上下文提取）"
+            calling_functions_text = "（未启用上下文提取）"
         
         # 最后一次性格式化prompt，包含所有参数
         base_prompt = format_prompt(
@@ -358,10 +366,10 @@ class DistillationAgent(BaseAgent):
         output_name_with_timestamp = f"{output_name}_{timestamp}"
         
         # 保存结果
-        # 如果使用了API匹配，数据已包含id和few_shot_examples，保存为external版本
+        # 如果使用了API匹配或上下文提取，数据已包含额外信息，保存为external版本
         # 否则只保存标准版本
-        if self.api_matcher is not None:
-            # 使用API匹配时，保存为external版本（包含id和few-shot examples）
+        if self.api_matcher is not None or self.use_context:
+            # 使用API匹配或上下文提取时，保存为external版本（包含额外信息）
             output_file_external = self.output_dir / f"{output_name_with_timestamp}_external.json"
             save_json(self.distilled_dataset, output_file_external)
             
@@ -378,7 +386,7 @@ class DistillationAgent(BaseAgent):
             output_file = self.output_dir / f"{output_name_with_timestamp}.json"
             save_json(dataset_standard, output_file)
         else:
-            # 未使用API匹配时，只保存标准版本
+            # 未使用API匹配或上下文提取时，只保存标准版本
             output_file = self.output_dir / f"{output_name_with_timestamp}.json"
             save_json(self.distilled_dataset, output_file)
             output_file_external = None
