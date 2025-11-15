@@ -117,5 +117,15 @@ API_BATCH_SIZE = 10  # 每批次处理的数据量
 API_BATCH_DELAY = 1  # 批次间延迟（秒）
 CHECKPOINT_INTERVAL = 50  # 保存检查点的间隔
 
+# 特征提示配置
+FEATURE_HINT_MODE = os.getenv("FEATURE_HINT_MODE", "global-highest")  # 可选: "category-wise" 或 "global-highest"
+FEATURE_HINT_MAX_PER_LEVEL = int(os.getenv("FEATURE_HINT_MAX_PER_LEVEL", "0"))  # category-wise模式下每个级别最多保留N个特征，0表示不限制
+
+# 特征提示模式说明:
+# - "category-wise": 每个类别独立选择最高级别,每个级别最多保留FEATURE_HINT_MAX_PER_LEVEL个特征
+#   例如: async有very_strong,concurrency有strong,OD有moderate → 都会输出
+# - "global-highest": 所有类别中只选择全局最高级别的特征
+#   例如: async有very_strong,concurrency有strong,OD有moderate → 只输出very_strong的特征
+
 # 日志配置
 LOG_LEVEL = "INFO"

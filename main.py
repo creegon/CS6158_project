@@ -147,6 +147,9 @@ def run_distillation():
                             top_k_shots = config.get('top_k_shots', 3)
                             use_context = config.get('use_context', False)
                             use_feature_hint = config.get('use_feature_hint', True)  # 默认启用
+                            feature_hint_mode = config.get('feature_hint_mode', 'global-highest')
+                            feature_hint_max_per_level = config.get('feature_hint_max_per_level', 0)
+                            use_reasoning_guide = config.get('use_reasoning_guide', False)
                             mode = config.get('mode', 'random')
                             test_size = config.get('test_size', 10)
                             random_seed = config.get('random_seed', 42)
@@ -199,6 +202,38 @@ def run_distillation():
             use_feature_hint = input("是否启用特征词频提示？(y/n, 默认y): ").strip().lower()
             use_feature_hint = use_feature_hint != 'n'  # 默认启用
             
+            # Step 3.6: 特征提示模式选择 (仅在启用特征提示时)
+            feature_hint_mode = None
+            feature_hint_max_per_level = None
+            
+            if use_feature_hint:
+                print("\n【Step 3.6/7】特征提示模式")
+                print("1. 全局最高级别模式 (推荐) - 只显示所有类别中最强的信号")
+                print("   例如: 如果有very_strong和moderate，只显示very_strong")
+                print("2. 按类别分组模式 - 每个类别显示各自的最高级别")
+                print("   例如: async显示very_strong，OD显示moderate")
+                mode_choice = input("选择模式 (1-2, 默认1): ").strip() or "1"
+                
+                if mode_choice == "2":
+                    feature_hint_mode = "category-wise"
+                    # 询问每级别最大特征数
+                    print("\n每个级别最多显示多少个特征？")
+                    max_input = input("输入数字 (0=不限制, 默认0): ").strip() or "0"
+                    try:
+                        feature_hint_max_per_level = int(max_input)
+                    except ValueError:
+                        feature_hint_max_per_level = 0
+                else:
+                    feature_hint_mode = "global-highest"
+                    feature_hint_max_per_level = 0  # 此参数在global-highest模式下不生效
+            
+            # Step 3.7: 推理指引选项 (双Agent推理链)
+            print("\n【Step 3.7/7】推理指引(双Agent推理链)")
+            print("提示: 启用后将使用第一个Agent生成推理指引,帮助第二个Agent避免常见陷阱")
+            print("      这会增加API调用次数和时间,但可能提高判断准确性")
+            use_reasoning_guide = input("是否启用推理指引？(y/n, 默认n): ").strip().lower()
+            use_reasoning_guide = use_reasoning_guide == 'y'  # 默认不启用
+            
             # Step 4: 选择测试模式
             print("\n【Step 4/7】测试模式")
             print("1. 最后N条")
@@ -237,6 +272,9 @@ def run_distillation():
                 'top_k_shots': top_k_shots,
                 'use_context': use_context,
                 'use_feature_hint': use_feature_hint,
+                'feature_hint_mode': feature_hint_mode,
+                'feature_hint_max_per_level': feature_hint_max_per_level,
+                'use_reasoning_guide': use_reasoning_guide,
                 'mode': mode,
                 'test_size': test_size,
                 'random_seed': random_seed,
@@ -264,7 +302,15 @@ def run_distillation():
         else:
             print("API匹配: 关闭")
         print(f"上下文提取: {'开启' if use_context else '关闭'}")
-        print(f"特征词频提示: {'开启' if use_feature_hint else '关闭'}")
+        feature_mode_desc = ""
+        if use_feature_hint and feature_hint_mode:
+            if feature_hint_mode == "global-highest":
+                feature_mode_desc = " (全局最高级别)"
+            else:
+                max_desc = f"每级别最多{feature_hint_max_per_level}个" if feature_hint_max_per_level > 0 else "不限制"
+                feature_mode_desc = f" (按类别分组, {max_desc})"
+        print(f"特征词频提示: {'开启' if use_feature_hint else '关闭'}{feature_mode_desc}")
+        print(f"推理指引(双Agent): {'开启' if use_reasoning_guide else '关闭'}")
         print(f"测试模式: {mode}")
         print(f"数据量: {test_size if test_size else '全部'}")
         print(f"随机种子: {random_seed}")
@@ -305,6 +351,12 @@ def run_distillation():
         # 创建Agent并运行
         print("\n🚀 开始数据蒸馏...")
         
+        # 临时设置特征提示模式环境变量(如果启用)
+        import os
+        if use_feature_hint and feature_hint_mode:
+            os.environ['FEATURE_HINT_MODE'] = feature_hint_mode
+            os.environ['FEATURE_HINT_MAX_PER_LEVEL'] = str(feature_hint_max_per_level)
+        
         agent = DistillationAgent(
             dataset_path=str(test_dataset),
             test_mode=mode,
@@ -316,7 +368,8 @@ def run_distillation():
             api_matcher=api_matcher,
             top_k_shots=top_k_shots if use_api_matching else 0,
             use_context=use_context,
-            use_feature_hint=use_feature_hint
+            use_feature_hint=use_feature_hint,
+            use_reasoning_guide=use_reasoning_guide
         )
         
         # 构建输出文件名
@@ -331,7 +384,13 @@ def run_distillation():
         if use_context:
             output_name_parts.append('context')
         if use_feature_hint:
-            output_name_parts.append('feature')
+            if feature_hint_mode == 'global-highest':
+                output_name_parts.append('feature_global')
+            else:
+                suffix = f'feature_cat' if feature_hint_max_per_level == 0 else f'feature_cat{feature_hint_max_per_level}'
+                output_name_parts.append(suffix)
+        if use_reasoning_guide:
+            output_name_parts.append('guide')
         output_name_parts.append(f'p{parallel_workers}')
         
         output_name = '_'.join(output_name_parts)
@@ -417,21 +476,21 @@ def run_evaluation():
     from pathlib import Path
     output_dir = Path(__file__).parent / 'output'
     
-    # 列出output目录中的所有JSON文件（优先显示带_external的文件）
+    # 列出output目录中的所有 _external.json 文件
     json_files = list(output_dir.glob('*_external.json'))
-    if not json_files:
-        # 如果没有带_external的文件，则显示所有JSON文件
-        json_files = list(output_dir.glob('*.json'))
     
     if not json_files:
-        print("\n✗ output目录中没有找到JSON文件")
-        print("提示: 请先运行数据蒸馏任务生成预测结果（建议使用带_external的文件进行评估）")
+        print("\n✗ output目录中没有找到 *_external.json 文件")
+        print("提示: 请先运行数据蒸馏任务生成预测结果")
         return
+    
+    # 按修改时间倒序排序 (最新的在前面)
+    json_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     
     print(f"\n找到 {len(json_files)} 个JSON文件:")
     for i, file in enumerate(json_files, 1):
         # 标注哪些是带额外信息的文件
-        marker = " ✓ (推荐)" if "_external" in file.name else ""
+        marker = " ✓ (推荐)"
         print(f"  {i}. {file.name}{marker}")
     
     try:
@@ -445,14 +504,6 @@ def run_evaluation():
         
         prediction_file = json_files[file_idx]
         print(f"\n选择的文件: {prediction_file.name}")
-        
-        # 检查是否使用带额外信息的文件
-        if "_external" not in prediction_file.name:
-            print("⚠ 警告: 该文件不包含ID字段，评估可能不准确")
-            confirm = input("是否继续？(y/n): ").strip().lower()
-            if confirm != 'y':
-                print("已取消")
-                return
         
         # 使用默认的ground truth文件
         ground_truth_file = Path(__file__).parent / 'dataset' / 'FlakyLens_dataset_with_nonflaky_indented.csv'

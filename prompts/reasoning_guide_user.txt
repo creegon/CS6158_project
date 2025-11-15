@@ -1,0 +1,8 @@
+该测试代码所属project的名称为：
+{project}
+
+它的测试名称为：
+{test_name}
+
+完整代码为：
+{full_code}

@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 from agents.base_agent import BaseAgent
+from agents.reasoning_agent import ReasoningAgent
+from agents.inferring_agent import InferringAgent
 from utils import (
     load_csv,
     sample_data,
@@ -27,9 +29,10 @@ from config import (
     API_BATCH_SIZE,
     API_BATCH_DELAY,
     CHECKPOINT_INTERVAL,
-    PROJECT_ROOT
+    PROJECT_ROOT,
+    FEATURE_HINT_MODE,
+    FEATURE_HINT_MAX_PER_LEVEL
 )
-from utils.feature_matcher import FeatureMatcher
 
 
 class DistillationAgent(BaseAgent):
@@ -53,6 +56,7 @@ class DistillationAgent(BaseAgent):
                  top_k_shots: int = 3,
                  use_context: bool = False,
                  use_feature_hint: bool = True,
+                 use_reasoning_guide: bool = False,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -72,6 +76,7 @@ class DistillationAgent(BaseAgent):
             top_k_shots: 使用的few-shot样本数量
             use_context: 是否启用上下文提取(从external_projects中提取)
             use_feature_hint: 是否启用特征词频提示(基于归一化频率分析)
+            use_reasoning_guide: 是否启用推理指引Agent(双Agent推理链)
             **kwargs: 传递给BaseAgent的其他参数
         """
         super().__init__(**kwargs)
@@ -90,34 +95,27 @@ class DistillationAgent(BaseAgent):
         self.checkpoint_interval = checkpoint_interval or CHECKPOINT_INTERVAL
         self.parallel_workers = max(1, parallel_workers)  # 确保至少为1
         
-        # API匹配相关
-        self.api_matcher = api_matcher
-        self.top_k_shots = top_k_shots if api_matcher else 0
+        # 推理指引相关
+        self.use_reasoning_guide = use_reasoning_guide
         
-        # Context提取器 (仅在需要时初始化)
-        self.use_context = use_context
-        self.context_fetcher = ProjectContextFetcher() if use_context else None
+        # 初始化ReasoningAgent（推理指引Agent）
+        if use_reasoning_guide:
+            self.reasoning_agent = ReasoningAgent(**kwargs)
+        else:
+            self.reasoning_agent = None
         
-        # 特征匹配器 (仅在需要时初始化)
-        self.use_feature_hint = use_feature_hint
-        self.feature_matcher = None
-        if use_feature_hint:
-            try:
-                lookup_path = PROJECT_ROOT / 'output' / 'facet_analysis' / 'feature_lookup_table.json'
-                if lookup_path.exists():
-                    self.feature_matcher = FeatureMatcher(str(lookup_path))
-                    print(f"✓ 特征匹配器已加载")
-                else:
-                    print(f"⚠️ 特征查找表不存在: {lookup_path}")
-                    print("   提示: 运行 python analyze_normalized_features.py 生成特征表")
-                    self.use_feature_hint = False
-            except Exception as e:
-                print(f"⚠️ 加载特征匹配器失败: {e}")
-                self.use_feature_hint = False
+        # 初始化InferringAgent（判断Agent）
+        self.inferring_agent = InferringAgent(
+            code_column=code_column,
+            api_matcher=api_matcher,
+            top_k_shots=top_k_shots,
+            use_context=use_context,
+            use_feature_hint=use_feature_hint,
+            **kwargs
+        )
         
-        # 加载prompt模板
+        # 加载系统prompt（用于convert_to_alpaca_format）
         self.system_prompt = load_prompt('distillation_system')
-        self.user_template = load_prompt('distillation_user')
         
         # 存储结果
         self.distilled_dataset: List[Dict] = []
@@ -130,9 +128,24 @@ class DistillationAgent(BaseAgent):
         """获取默认系统提示词"""
         return "你是一个专业的软件测试专家，擅长分析测试代码并识别Flaky Tests。"
     
+    def generate_reasoning_guide(self, row: pd.Series) -> Optional[str]:
+        """
+        生成推理指引(委托给ReasoningAgent)
+        
+        Args:
+            row: 数据行
+            
+        Returns:
+            推理指引文本，失败返回None
+        """
+        if not self.use_reasoning_guide or not self.reasoning_agent:
+            return None
+        
+        return self.reasoning_agent.generate_from_row(row, self.code_column)
+    
     def generate_user_prompt(self, row: pd.Series) -> str:
         """
-        生成用户提示词（支持API匹配的few-shot examples）
+        生成用户提示词（委托给InferringAgent）
         
         Args:
             row: 数据行
@@ -140,172 +153,29 @@ class DistillationAgent(BaseAgent):
         Returns:
             格式化的用户提示词
         """
-        prompt, _ = self.generate_user_prompt_with_examples(row)
+        prompt, _, _ = self.generate_user_prompt_with_examples(row)
         return prompt
     
     def generate_user_prompt_with_examples(self, row: pd.Series) -> tuple:
         """
-        生成用户提示词并返回few-shot examples（支持API匹配）
+        生成用户提示词并返回元数据（委托给ReasoningAgent和InferringAgent）
         
         Args:
             row: 数据行
             
         Returns:
-            (格式化的用户提示词, few-shot examples列表)
+            (格式化的用户提示词, 元数据字典, 推理指引文本)
         """
-        full_code = row.get(self.code_column, row.get('full_code', ''))
-        project = row.get('project', 'Unknown')
-        test_name = row.get('test_name', 'Unknown')
+        # 生成推理指引(如果启用)
+        reasoning_guide_text = self.generate_reasoning_guide(row)
         
-        few_shot_examples = None
-        few_shots_text = ""
+        # 生成用户提示词和元数据
+        user_prompt, metadata = self.inferring_agent.generate_from_row(row, reasoning_guide_text)
         
-        # 如果启用API匹配，添加few-shot examples
-        if self.api_matcher and self.top_k_shots > 0:
-            try:
-                # 检索最相似的案例
-                similar_cases = self.api_matcher.retrieve_top_k(
-                    full_code, 
-                    top_k=self.top_k_shots,
-                    min_similarity=0.1  # 最小相似度阈值
-                )
-                
-                if similar_cases:
-                    # 构建few-shot examples记录（用于debug）
-                    few_shot_examples = []
-                    for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
-                        example_info = {
-                            'similarity': float(similarity),
-                            'project': str(case_row.get('project', 'Unknown')),
-                            'test_name': str(case_row.get('test_name', 'Unknown')),
-                            'label': str(case_row.get('label', 'Unknown')),
-                            'code_preview': str(case_row.get(self.code_column, case_row.get('full_code', ''))[:200])
-                        }
-                        if 'id' in case_row:
-                            example_info['id'] = int(case_row['id'])
-                        few_shot_examples.append(example_info)
-                    
-                    # 构建few-shot examples文本（用于模板替换）
-                    examples_parts = []
-                    for i, (idx, similarity, case_row) in enumerate(similar_cases, 1):
-                        case_code = case_row.get(self.code_column, case_row.get('full_code', ''))
-                        case_label = case_row.get('label', 'Unknown')
-                        case_project = case_row.get('project', 'Unknown')
-                        case_test_name = case_row.get('test_name', 'Unknown')
-                        
-                        example = f"""【案例 {i}】(相似度: {similarity:.2f})
-项目: {case_project}
-测试名称: {case_test_name}
-标签: {case_label}
-代码:
-{case_code}
-{'-' * 60}"""
-                        examples_parts.append(example)
-                    
-                    few_shots_text = "\n".join(examples_parts)
-            
-            except Exception as e:
-                print(f"⚠ API匹配失败: {e}")
-                few_shots_text = "（未检索到相似案例）"
-        else:
-            few_shots_text = "（未启用few-shot检索）"
+        # 提取few_shot_examples（保持向后兼容）
+        few_shot_examples = metadata.get('few_shot_examples', None)
         
-        # 提取项目上下文信息 (仅在启用时)
-        context_windows_text = ""
-        calling_functions_text = ""
-        
-        if self.use_context and self.context_fetcher:
-            try:
-                context_info = self.context_fetcher.get_test_context(
-                    project=project,
-                    test_name=test_name,
-                    context_lines=20,
-                    invocation_limit=10
-                )
-                
-                # 格式化surrounding_window
-                if context_info.get('surrounding_window'):
-                    context_windows_text = f"""文件路径: {context_info['file_path']}
-类名: {context_info['class_name']}
-方法名: {context_info['method_name']}
-
-上下文代码:
-{context_info['surrounding_window']}"""
-                
-                # 格式化invocations
-                if context_info.get('invocations'):
-                    invocations_list = []
-                    for i, inv in enumerate(context_info['invocations'], 1):
-                        invocations_list.append(
-                            f"[{i}] {inv['file_path']}:{inv['line_number']}\n    {inv['line_preview']}"
-                        )
-                    calling_functions_text = "\n".join(invocations_list)
-                else:
-                    calling_functions_text = "（未找到调用该测试方法的位置）"
-                    
-            except Exception as e:
-                print(f"⚠ 提取上下文信息失败 ({project}/{test_name}): {e}")
-                context_windows_text = "（无法获取上下文信息）"
-                calling_functions_text = "（无法获取调用信息）"
-        else:
-            # 未启用上下文提取
-            context_windows_text = "（未启用上下文提取）"
-            calling_functions_text = "（未启用上下文提取）"
-        
-        # 生成特征词频提示 (仅在启用时)
-        feature_hint_text = ""
-        if self.use_feature_hint and self.feature_matcher:
-            try:
-                # 获取匹配的特征
-                matches = self.feature_matcher.match_features(full_code)
-                
-                if matches:
-                    hint_parts = []
-                    hint_parts.append("下面是一些给你提供的flaky种类的词频提示，包括它的类别以及它相对于non flaky的倍率。倍率越大就越有可能是对应的种类。可能会同时有很多种种类，这时，你需要结合你原有的判断去完成。并且，它们只是参考，你最终还是要依据题目本身做出逻辑分析和回答。\n")
-                    
-                    # 按类别组织提示
-                    for category, levels in matches.items():
-                        category_features = []
-                        
-                        # 优先级: unique > very_strong > strong > moderate
-                        for level in ['unique', 'very_strong', 'strong', 'moderate']:
-                            if levels[level]:
-                                # 按区分度和密度排序,取前3个
-                                features = sorted(levels[level],
-                                                key=lambda x: (x['discrimination'], x['flaky_density']),
-                                                reverse=True)[:3]
-                                
-                                for feat in features:
-                                    disc_str = '∞' if feat['discrimination'] == float('inf') else f"{feat['discrimination']:.1f}x"
-                                    category_features.append(
-                                        f"【{feat['feature']}】: 它的类别是【{category}】，它的词频倍率是【{disc_str}】"
-                                    )
-                        
-                        if category_features:
-                            hint_parts.extend(category_features)
-                    
-                    if len(hint_parts) > 1:  # 除了开头说明,还有实际特征
-                        feature_hint_text = "\n".join(hint_parts)
-                    
-            except Exception as e:
-                print(f"⚠ 生成特征提示失败: {e}")
-        
-        if not feature_hint_text:
-            feature_hint_text = "（未提供词频提示）"
-        
-        # 最后一次性格式化prompt，包含所有参数
-        base_prompt = format_prompt(
-            self.user_template, 
-            project=project,
-            test_name=test_name,
-            full_code=full_code,
-            few_shots=few_shots_text,
-            context_windows=context_windows_text,
-            calling_functions=calling_functions_text,
-            feature_hints=feature_hint_text
-        )
-        
-        return base_prompt, few_shot_examples
+        return user_prompt, few_shot_examples, reasoning_guide_text
     
     def process_single_row(self, idx: int, row: pd.Series, include_id: bool = False) -> Optional[Dict]:
         """
@@ -314,16 +184,16 @@ class DistillationAgent(BaseAgent):
         Args:
             idx: 数据索引
             row: 数据行
-            include_id: 是否包含ID字段
+            include_id: 是否包含ID字段（已废弃，总是包含额外信息）
             
         Returns:
-            Alpaca格式的数据，失败返回None
+            Alpaca格式的数据（包含所有额外信息），失败返回None
         """
-        # 生成prompt（同时获取few-shot examples）
-        user_prompt, few_shot_examples = self.generate_user_prompt_with_examples(row)
+        # 生成推理指引
+        reasoning_guide = self.generate_reasoning_guide(row)
         
-        # 调用API获取推理过程
-        reasoning = self.call_api(user_prompt)
+        # 调用InferringAgent进行推断
+        reasoning, metadata = self.inferring_agent.infer_from_row(row, reasoning_guide)
         
         if reasoning is None:
             with self._lock:
@@ -331,16 +201,33 @@ class DistillationAgent(BaseAgent):
                 self.failed_indices.append(idx)
             return None
         
-        # 转换为Alpaca格式，直接传入已生成的 user_prompt
+        # 从metadata中提取few_shot_examples（保持向后兼容）
+        few_shot_examples = metadata.get('few_shot_examples', None)
+        
+        # 重新生成user_prompt（用于Alpaca格式）
+        user_prompt, _ = self.inferring_agent.generate_from_row(row, reasoning_guide)
+        
+        # 转换为Alpaca格式
         alpaca_item = convert_to_alpaca_format(
             row, 
             reasoning, 
             self.code_column, 
-            include_id=include_id,
+            include_id=True,
             system_prompt=self.system_prompt,
-            user_prompt=user_prompt,  # 直接传入已生成的prompt
+            user_prompt=user_prompt,
             few_shot_examples=few_shot_examples
         )
+        
+        # 添加所有元数据到external版本
+        if metadata.get('external_context'):
+            alpaca_item['external_context'] = metadata['external_context']
+        
+        if metadata.get('feature_hints'):
+            alpaca_item['feature_hints'] = metadata['feature_hints']
+        
+        if reasoning_guide:
+            alpaca_item['reasoning_guide'] = reasoning_guide
+        
         return alpaca_item
     
     def process_single_row_with_index(self, task: tuple) -> tuple:
@@ -348,13 +235,13 @@ class DistillationAgent(BaseAgent):
         处理单条数据（带索引，用于并行处理）
         
         Args:
-            task: (idx, row, include_id) 元组
+            task: (idx, row) 元组
             
         Returns:
             (idx, alpaca_item) 元组
         """
-        idx, row, include_id = task
-        alpaca_item = self.process_single_row(idx, row, include_id=include_id)
+        idx, row = task
+        alpaca_item = self.process_single_row(idx, row)
         return (idx, alpaca_item)
     
     def save_checkpoint(self, checkpoint_name: str = 'checkpoint') -> None:
@@ -405,6 +292,22 @@ class DistillationAgent(BaseAgent):
         print(f"   批次大小: {self.batch_size}")
         print(f"   批次延迟: {self.batch_delay}秒")
         print(f"   检查点间隔: {self.checkpoint_interval}条")
+        
+        # 打印优化项配置
+        optimizations = []
+        if self.use_reasoning_guide:
+            optimizations.append("推理指引(双Agent)")
+        if self.inferring_agent.api_matcher:
+            optimizations.append(f"Few-shot样本(top-{self.inferring_agent.top_k_shots})")
+        if self.inferring_agent.use_context:
+            optimizations.append("外部上下文")
+        if self.inferring_agent.use_feature_hint:
+            mode_desc = "全局最高级别" if FEATURE_HINT_MODE == "global-highest" else f"按类别分组(每级别最多{FEATURE_HINT_MAX_PER_LEVEL if FEATURE_HINT_MAX_PER_LEVEL > 0 else '不限'}个)"
+            optimizations.append(f"特征词频({mode_desc})")
+        
+        if optimizations:
+            print(f"   优化项: {', '.join(optimizations)}")
+        
         print("=" * 60 + "\n")
         
         # 重置结果
@@ -428,31 +331,30 @@ class DistillationAgent(BaseAgent):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_name_with_timestamp = f"{output_name}_{timestamp}"
         
-        # 保存结果
-        # 如果使用了API匹配或上下文提取，数据已包含额外信息，保存为external版本
-        # 否则只保存标准版本
-        if self.api_matcher is not None or self.use_context:
-            # 使用API匹配或上下文提取时，保存为external版本（包含额外信息）
-            output_file_external = self.output_dir / f"{output_name_with_timestamp}_external.json"
-            save_json(self.distilled_dataset, output_file_external)
-            
-            # 同时保存一个不带额外信息的标准版本（用于训练）
-            print("\n🔄 生成标准训练数据集（移除额外信息）...")
-            dataset_standard = []
-            for item in self.distilled_dataset:
-                standard_item = {
-                    'instruction': item['instruction'],
-                    'input': item['input'],
-                    'output': item['output']
-                }
-                dataset_standard.append(standard_item)
-            output_file = self.output_dir / f"{output_name_with_timestamp}.json"
-            save_json(dataset_standard, output_file)
-        else:
-            # 未使用API匹配或上下文提取时，只保存标准版本
-            output_file = self.output_dir / f"{output_name_with_timestamp}.json"
-            save_json(self.distilled_dataset, output_file)
-            output_file_external = None
+        # 总是生成两个文件:
+        # 1. external 版本: 包含 id 和所有额外信息 (few_shot_examples, external_context, feature_hints)
+        # 2. standard 版本: 仅包含 instruction, input, output (用于训练)
+        
+        print("\n💾 保存结果...")
+        
+        # 保存 external 版本 (包含所有额外信息)
+        output_file_external = self.output_dir / f"{output_name_with_timestamp}_external.json"
+        save_json(self.distilled_dataset, output_file_external)
+        print(f"✓ External版本已保存: {output_file_external.name}")
+        
+        # 生成 standard 版本 (仅保留训练所需的基本字段)
+        dataset_standard = []
+        for item in self.distilled_dataset:
+            standard_item = {
+                'instruction': item['instruction'],
+                'input': item['input'],
+                'output': item['output']
+            }
+            dataset_standard.append(standard_item)
+        
+        output_file = self.output_dir / f"{output_name_with_timestamp}.json"
+        save_json(dataset_standard, output_file)
+        print(f"✓ Standard版本已保存: {output_file.name}")
         
         # 打印统计信息
         print("\n" + "=" * 60)
@@ -462,11 +364,24 @@ class DistillationAgent(BaseAgent):
         print(f"✗ 失败: {len(self.failed_indices)} 条")
         print(f"⏱ 耗时: {elapsed_time:.2f} 秒")
         print(f"⚡ 平均速度: {len(df) / elapsed_time:.2f} 条/秒")
-        if self.api_matcher is not None:
-            print(f"📁 标准输出: {output_file}")
-            print(f"📁 额外信息输出: {output_file_external}")
-        else:
-            print(f"📁 输出文件: {output_file}")
+        print(f"\n📁 输出文件:")
+        print(f"  Standard版本: {output_file}")
+        print(f"  External版本: {output_file_external}")
+        
+        # 额外信息统计
+        extra_info = []
+        if self.use_reasoning_guide:
+            extra_info.append("推理指引")
+        if self.inferring_agent.api_matcher is not None:
+            extra_info.append("Few-shot样本")
+        if self.inferring_agent.use_context:
+            extra_info.append("外部上下文")
+        if self.inferring_agent.use_feature_hint:
+            extra_info.append("特征词频")
+        
+        if extra_info:
+            print(f"  External包含: {', '.join(extra_info)}")
+        
         print("=" * 60)
         
         # 打印API统计
@@ -498,9 +413,7 @@ class DistillationAgent(BaseAgent):
             df: 要处理的数据框
         """
         for idx, row in tqdm(df.iterrows(), total=len(df), desc="处理进度"):
-            # 如果启用API匹配，直接生成包含额外信息的版本
-            include_id = self.api_matcher is not None
-            alpaca_item = self.process_single_row(idx, row, include_id=include_id)
+            alpaca_item = self.process_single_row(idx, row)
             
             if alpaca_item:
                 self.distilled_dataset.append(alpaca_item)
@@ -521,11 +434,8 @@ class DistillationAgent(BaseAgent):
         Args:
             df: 要处理的数据框
         """
-        # 如果启用API匹配，直接生成包含额外信息的版本
-        include_id = self.api_matcher is not None
-        
         # 准备任务列表
-        tasks = [(idx, row, include_id) for idx, row in df.iterrows()]
+        tasks = [(idx, row) for idx, row in df.iterrows()]
         results = {}  # 存储结果，保持原始顺序
         processed_count = 0
         
