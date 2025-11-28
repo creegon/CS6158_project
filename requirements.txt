@@ -35,3 +35,6 @@ tqdm>=4.65.0
 
 # 随机数
 # random 是 Python 标准库，无需安装
+
+# Google GenAI SDK
+google-genai

@@ -18,6 +18,10 @@ def extract_answer(output_text: str) -> Tuple[Optional[str], Optional[str]]:
         - 是否Flaky: '是' 或 '否'
         - 类型: 'Async', 'Conc', 'Time', 'UC', 'OD', 'Non-Flaky'
     """
+    # 处理None或空字符串
+    if output_text is None or not isinstance(output_text, str):
+        return None, None
+    
     # 匹配多种可能的格式
     patterns = [
         r'答案[：:]\s*(是|否)\s*[-–—]\s*(\w+[-\w]*)',

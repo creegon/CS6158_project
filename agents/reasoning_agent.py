@@ -36,6 +36,10 @@ class ReasoningAgent(BaseAgent):
         self.system_prompt = load_prompt('reasoning_guide_system')
         self.user_template = load_prompt('reasoning_guide_user')
         
+        # 加载辩护专用的prompt模板
+        self.defense_system_prompt = load_prompt('reasoning_defense_system')
+        self.defense_user_template = load_prompt('reasoning_defense_user')
+        
         print("✓ ReasoningAgent已初始化")
     
     def get_default_system_prompt(self) -> str:
@@ -107,3 +111,31 @@ class ReasoningAgent(BaseAgent):
             推理指引文本，失败返回None
         """
         return self.generate_reasoning_guide(project, test_name, full_code)
+
+    def defend_analysis(self,
+                       project: str,
+                       test_name: str,
+                       full_code: str,
+                       reasoning_guide: str,
+                       critique: str) -> Optional[str]:
+        """
+        针对质疑进行辩护
+        """
+        prompt = format_prompt(
+            self.defense_user_template,
+            project=project,
+            test_name=test_name,
+            full_code=full_code,
+            reasoning_guide=reasoning_guide,
+            critique=critique
+        )
+        
+        try:
+            defense = self.call_api(
+                prompt,
+                system_prompt=self.defense_system_prompt
+            )
+            return defense
+        except Exception as e:
+            print(f"⚠ 辩护生成失败: {e}")
+            return None

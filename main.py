@@ -3,6 +3,7 @@
 提供交互式界面来运行不同的Agent任务
 """
 import sys
+import json
 from pathlib import Path
 
 # 添加项目根目录到Python路径
@@ -105,7 +106,9 @@ def print_menu():
     print("4. 数据集划分")
     print("5. 配置管理")
     print("6. 模型设置")
-    print("7. 退出")
+    print("7. 一键测试所有Fold中的Flaky项目")
+    print("8. 针对错误样本重测")
+    print("9. 退出")
     print("=" * 60)
 
 
@@ -119,6 +122,7 @@ def run_distillation():
     saved_configs = list_saved_configs()
     use_saved_config = False
     config_to_save = {}
+    use_debate = False  # Initialize default value
     
     if saved_configs:
         print("\n💾 发现已保存的配置:")
@@ -150,6 +154,7 @@ def run_distillation():
                             feature_hint_mode = config.get('feature_hint_mode', 'global-highest')
                             feature_hint_max_per_level = config.get('feature_hint_max_per_level', 0)
                             use_reasoning_guide = config.get('use_reasoning_guide', False)
+                            use_debate = config.get('use_debate', False)  # Load use_debate
                             mode = config.get('mode', 'random')
                             test_size = config.get('test_size', 10)
                             random_seed = config.get('random_seed', 42)
@@ -227,12 +232,23 @@ def run_distillation():
                     feature_hint_mode = "global-highest"
                     feature_hint_max_per_level = 0  # 此参数在global-highest模式下不生效
             
-            # Step 3.7: 推理指引选项 (双Agent推理链)
-            print("\n【Step 3.7/7】推理指引(双Agent推理链)")
-            print("提示: 启用后将使用第一个Agent生成推理指引,帮助第二个Agent避免常见陷阱")
-            print("      这会增加API调用次数和时间,但可能提高判断准确性")
+            # Step 3.7: 推理指引与辩论机制
+            print("\n【Step 3.7/7】推理指引与辩论机制")
+            print("提示: 启用后将使用多Agent系统进行深度推理")
+            print("      1. Reasoning Agent: 生成初始分析")
+            print("      2. Challenger Agent: (可选) 扮演'杠精'进行质疑")
+            print("      3. Defender Agent: (可选) 对质疑进行辩护")
+            print("      这会显著增加API调用次数，但能大幅提高对隐蔽Flaky的识别率")
+            
             use_reasoning_guide = input("是否启用推理指引？(y/n, 默认n): ").strip().lower()
             use_reasoning_guide = use_reasoning_guide == 'y'  # 默认不启用
+            
+            use_debate = False
+            if use_reasoning_guide:
+                print("\n是否启用辩论机制 (Challenger vs Defender)?")
+                print("启用后，模型将进行自我辩论，挖掘深层风险。")
+                use_debate_input = input("是否启用辩论？(y/n, 默认y): ").strip().lower()
+                use_debate = use_debate_input != 'n' # 默认启用辩论如果启用了推理指引
             
             # Step 4: 选择测试模式
             print("\n【Step 4/7】测试模式")
@@ -275,6 +291,7 @@ def run_distillation():
                 'feature_hint_mode': feature_hint_mode,
                 'feature_hint_max_per_level': feature_hint_max_per_level,
                 'use_reasoning_guide': use_reasoning_guide,
+                'use_debate': use_debate,
                 'mode': mode,
                 'test_size': test_size,
                 'random_seed': random_seed,
@@ -310,7 +327,12 @@ def run_distillation():
                 max_desc = f"每级别最多{feature_hint_max_per_level}个" if feature_hint_max_per_level > 0 else "不限制"
                 feature_mode_desc = f" (按类别分组, {max_desc})"
         print(f"特征词频提示: {'开启' if use_feature_hint else '关闭'}{feature_mode_desc}")
-        print(f"推理指引(双Agent): {'开启' if use_reasoning_guide else '关闭'}")
+        
+        guide_desc = "开启" if use_reasoning_guide else "关闭"
+        if use_reasoning_guide and use_debate:
+            guide_desc += " (含辩论)"
+        print(f"推理指引(多Agent): {guide_desc}")
+        
         print(f"测试模式: {mode}")
         print(f"数据量: {test_size if test_size else '全部'}")
         print(f"随机种子: {random_seed}")
@@ -369,7 +391,8 @@ def run_distillation():
             top_k_shots=top_k_shots if use_api_matching else 0,
             use_context=use_context,
             use_feature_hint=use_feature_hint,
-            use_reasoning_guide=use_reasoning_guide
+            use_reasoning_guide=use_reasoning_guide,
+            use_debate=use_debate
         )
         
         # 构建输出文件名
@@ -391,6 +414,8 @@ def run_distillation():
                 output_name_parts.append(suffix)
         if use_reasoning_guide:
             output_name_parts.append('guide')
+            if use_debate:
+                output_name_parts.append('debate')
         output_name_parts.append(f'p{parallel_workers}')
         
         output_name = '_'.join(output_name_parts)
@@ -691,7 +716,98 @@ def run_dataset_split():
         traceback.print_exc()
 
 
-        traceback.print_exc()
+def run_all_flaky_tests_in_folds():
+    """一键测试所有Fold中的Flaky项目"""
+    import os
+    import pandas as pd
+    from config import OUTPUT_DIR
+    
+    print("\n" + "=" * 60)
+    print("🚀 开始一键测试所有Fold中的Flaky项目")
+    print("=" * 60)
+    
+    dataset_dir = Path(__file__).parent / 'dataset' / 'kfold_splits'
+    if not dataset_dir.exists():
+        print(f"✗ 未找到K-fold目录: {dataset_dir}")
+        return
+
+    # 确认是否开启Reasoning Guide
+    use_reasoning = input("\n是否开启Reasoning Guide (推荐开启)? (y/n, 默认y): ").strip().lower() != 'n'
+    
+    # 确认并行数
+    try:
+        workers = int(input("并行线程数 (默认4): ").strip() or "4")
+    except ValueError:
+        workers = 4
+
+    for k in range(1, 5):
+        print(f"\n" + "-" * 40)
+        print(f"📂 处理 Fold {k}...")
+        print("-" * 40)
+        
+        test_file = dataset_dir / f'fold_{k}_test.csv'
+        train_file = dataset_dir / f'fold_{k}_train.csv'
+        
+        if not test_file.exists() or not train_file.exists():
+            print(f"⚠️  Fold {k} 文件不完整，跳过")
+            continue
+            
+        # 1. 筛选Flaky数据
+        print(f"  正在筛选 {test_file.name} 中的Flaky数据...")
+        try:
+            df = pd.read_csv(test_file)
+            # 筛选 label 不为 'non-flaky' 的行
+            flaky_df = df[df['label'] != 'non-flaky']
+            
+            if len(flaky_df) == 0:
+                print("  ⚠️  未找到Flaky数据，跳过")
+                continue
+                
+            print(f"  ✓ 找到 {len(flaky_df)} 条Flaky数据")
+            
+            # 保存临时文件
+            # 确保输出目录存在
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            temp_file = OUTPUT_DIR / f'temp_fold_{k}_flaky_only.csv'
+            flaky_df.to_csv(temp_file, index=False)
+            
+            # 2. 初始化API匹配器 (使用对应的Train Set)
+            print(f"  正在初始化API匹配器 (使用 {train_file.name})...")
+            api_matcher = FacetedAPISignatureMatcher(
+                dataset_path=train_file,
+                code_column='full_code',
+                label_column='label'
+            )
+            
+            # 3. 运行DistillationAgent
+            print("  🚀 启动DistillationAgent...")
+            agent = DistillationAgent(
+                dataset_path=temp_file,
+                api_matcher=api_matcher,
+                parallel_workers=workers,
+                use_reasoning_guide=use_reasoning,
+                use_feature_hint=True, # 默认开启特征提示
+                test_mode='all' # 处理所有筛选出的数据
+            )
+            
+            output_name = f'fold_{k}_flaky_distillation'
+            agent.run(output_name=output_name)
+            
+            # 清理临时文件
+            if temp_file.exists():
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+                    
+        except Exception as e:
+            print(f"  ✗ 处理 Fold {k} 时发生错误: {e}")
+            import traceback
+            traceback.print_exc()
+                
+    print("\n" + "=" * 60)
+    print("✅ 所有Fold处理完成!")
+    print("=" * 60)
 
 
 def run_config_manager():
@@ -765,7 +881,7 @@ def run_model_settings():
     print(f"\n📌 当前配置:")
     print(f"   提供商: {provider}")
     print(f"   模型: {model}")
-    print(f"   API URL: {base_url}")
+    print(f"   API URL: {base_url if base_url else 'N/A (SDK)'}")
     print(f"   API密钥: {api_key_status}")
     
     print("\n" + "-" * 60)
@@ -859,11 +975,192 @@ def run_model_settings():
         print("✗ 无效的操作")
 
 
+def run_retest_failed_samples():
+    """针对错误样本进行重测"""
+    print("\n" + "=" * 60)
+    print("针对错误样本重测")
+    print("=" * 60)
+    
+    # 1. 选择评估结果文件
+    eval_dir = OUTPUT_DIR / 'evaluation'
+    if not eval_dir.exists():
+        print("✗ 未找到评估结果目录")
+        return
+
+    json_files = list(eval_dir.glob('*.json'))
+    if not json_files:
+        print("✗ 未找到评估结果文件")
+        return
+
+    print("\n请选择评估结果文件 (从中提取错误样本ID):")
+    for i, f in enumerate(json_files, 1):
+        print(f"  {i}. {f.name}")
+    
+    try:
+        choice = input(f"\n选择 (1-{len(json_files)}): ").strip()
+        if not choice:
+            return
+        idx = int(choice) - 1
+        if not (0 <= idx < len(json_files)):
+            print("✗ 无效选择")
+            return
+        eval_file = json_files[idx]
+    except ValueError:
+        print("✗ 无效输入")
+        return
+
+    # 2. 提取错误样本ID
+    try:
+        with open(eval_file, 'r', encoding='utf-8') as f:
+            eval_data = json.load(f)
+        
+        failed_ids = []
+        
+        # 情况1: 标准评估报告格式 (包含 error_cases)
+        if isinstance(eval_data, dict) and 'error_cases' in eval_data:
+            print("✓ 检测到标准评估报告格式")
+            for item in eval_data['error_cases']:
+                if 'id' in item:
+                    failed_ids.append(item['id'])
+                    
+        # 情况2: 列表格式 (可能是原始预测结果)
+        elif isinstance(eval_data, list):
+            print("✓ 检测到列表格式")
+            for item in eval_data:
+                # 检查是否有 result 字段
+                if 'result' in item:
+                    if item['result'] in ['FP', 'FN']:
+                        if 'id' in item:
+                            failed_ids.append(item['id'])
+                # 或者比较 prediction 和 actual
+                elif 'prediction' in item and 'actual' in item:
+                    # 简单比较
+                    pred = str(item['prediction']).lower()
+                    act = str(item['actual']).lower()
+                    # 提取核心判断 (是/否)
+                    pred_is_flaky = '是' in pred or 'yes' in pred or 'flaky' in pred and 'non-flaky' not in pred
+                    act_is_flaky = '是' in act or 'yes' in act or 'flaky' in act and 'non-flaky' not in act
+                    
+                    if pred_is_flaky != act_is_flaky:
+                        if 'id' in item:
+                            failed_ids.append(item['id'])
+                            
+        if not failed_ids:
+            print("✗ 未在文件中找到错误样本")
+            return
+            
+    except Exception as e:
+        print(f"✗ 读取评估文件失败: {e}")
+        return
+
+    print(f"✓ 提取到 {len(failed_ids)} 个错误样本ID")
+    if len(failed_ids) == 0:
+        return
+
+    # 3. 选择原始数据集 (用于获取代码和上下文)
+    print("\n【Step 2】选择原始数据集 (包含完整字段)")
+    # 尝试自动匹配 fold
+    # 如果 eval_file 是 ds_1003.json，可能对应 fold 1 test?
+    # 为了安全，让用户选择，或者默认使用主数据集
+    test_dataset = select_dataset("请选择包含这些样本的原始数据集")
+    if not test_dataset:
+        return
+
+    # 4. 选择训练集 (默认 train 1)
+    print("\n【Step 3】选择训练集 (用于Few-shot)")
+    train_dataset = None
+    kfold_dir = Path(__file__).parent / 'dataset' / 'kfold_splits'
+    default_train = kfold_dir / 'fold_1_train.csv'
+    
+    if default_train.exists():
+        print(f"默认使用: {default_train.name}")
+        use_default = input("是否使用默认训练集? (y/n, 默认y): ").strip().lower() != 'n'
+        if use_default:
+            train_dataset = default_train
+    
+    if not train_dataset:
+        train_dataset = select_dataset("请选择训练集")
+        if not train_dataset:
+            return
+
+    # 5. 配置参数
+    print("\n【Step 4】配置参数")
+    
+    # 基础优化项
+    use_reasoning_guide = input("是否启用推理指引(Reasoning Guide)? (y/n, 默认y): ").strip().lower() != 'n'
+    
+    use_debate = False
+    if use_reasoning_guide:
+        use_debate = input("是否启用辩论模式(Debate)? (y/n, 默认y): ").strip().lower() != 'n'
+    
+    use_context = input("是否启用外部上下文(External Context)? (y/n, 默认n): ").strip().lower() == 'y'
+    use_feature_hint = input("是否启用特征词频提示(Feature Hint)? (y/n, 默认n): ").strip().lower() == 'y'
+    
+    # Few-shot 配置
+    top_k_shots = 3
+    use_few_shot = True
+    if train_dataset:
+        use_few_shot = input("是否启用Few-shot (API Matching)? (y/n, 默认y): ").strip().lower() != 'n'
+        if use_few_shot:
+            try:
+                k_input = input("Few-shot样本数量 (默认3): ").strip()
+                if k_input:
+                    top_k_shots = int(k_input)
+            except ValueError:
+                print("输入无效，使用默认值 3")
+        else:
+            top_k_shots = 0
+            
+    # 线程配置
+    num_workers = 10
+    try:
+        w_input = input("并行线程数 (默认10): ").strip()
+        if w_input:
+            num_workers = int(w_input)
+    except ValueError:
+        print("输入无效，使用默认值 1")
+    
+    # 6. 运行蒸馏
+    print(f"\n🚀 准备开始重测 {len(failed_ids)} 个样本...")
+    
+    # 初始化 API Matcher
+    api_matcher = None
+    if train_dataset and use_few_shot:
+        print("正在初始化API匹配器...")
+        try:
+            import pandas as pd
+            train_df = pd.read_csv(train_dataset)
+            api_matcher = FacetedAPISignatureMatcher(train_df)
+        except Exception as e:
+            print(f"✗ 加载训练集失败: {e}")
+            return
+    
+    agent = DistillationAgent(
+        dataset_path=test_dataset,
+        output_dir=OUTPUT_DIR,
+        test_mode='all', # 使用 target_ids 时 mode 不重要，但设为 all 比较好
+        test_size=len(failed_ids),
+        use_reasoning_guide=use_reasoning_guide,
+        use_debate=use_debate,
+        api_matcher=api_matcher,
+        top_k_shots=top_k_shots,
+        use_context=use_context,
+        use_feature_hint=use_feature_hint,
+        target_ids=failed_ids,
+        parallel_workers=num_workers
+    )
+    
+    output_name = f"retest_{eval_file.stem}_failed"
+    agent.run(output_name=output_name)
+    
+    print("\n✓ 重测完成")
+
+
 def main():
     """主函数"""
     while True:
         print_menu()
-        choice = input("\n请选择操作 (1-7): ").strip()
+        choice = input("\n请选择操作 (1-8): ").strip()
         
         if choice == '1':
             run_distillation()
@@ -878,6 +1175,10 @@ def main():
         elif choice == '6':
             run_model_settings()
         elif choice == '7':
+            run_all_flaky_tests_in_folds()
+        elif choice == '8':
+            run_retest_failed_samples()
+        elif choice == '9':
             print("\n👋 再见!")
             break
         else:

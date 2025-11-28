@@ -30,11 +30,13 @@ def load_predictions_from_alpaca(json_file: Union[str, Path]) -> Dict[int, Tuple
         # 提取答案
         is_flaky, category = extract_answer(output)
         
+        # 如果output为null或无法解析,记录为Non-Flaky
         if is_flaky is None or category is None:
-            print(f"⚠ 警告: 第 {i+1} 条记录无法提取答案")
-            continue
+            print(f"⚠ 警告: 第 {i+1} 条记录(ID={item.get('id', i)})无法提取答案,默认为Non-Flaky")
+            is_flaky = '否'
+            category = 'Non-Flaky'
         
-        # 优先使用 id 字段，如果没有则使用索引
+        # 优先使用 id 字段,如果没有则使用索引
         test_id = item.get('id', i)
         predictions[test_id] = (is_flaky, category)
     

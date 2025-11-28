@@ -7,6 +7,9 @@
 完整代码为：
 {full_code}
 
+推理指引与辩论历史：
+{reasoning_guide}
+
 检索到的相近案例有：
 {few_shots}
 

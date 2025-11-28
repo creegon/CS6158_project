@@ -29,7 +29,7 @@
 ## 📁 项目结构
 
 ```
-CS6158 project/
+CS6158_project/
 ├── config/                      # 配置文件
 │   ├── __init__.py
 │   └── config.py               # API密钥、路径等配置（支持多提供商）

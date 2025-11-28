@@ -1,0 +1,182 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{listings}
+\usepackage{xcolor}  % 用于代码高亮的颜色
+
+\lstdefinestyle{mystyle}{
+    basicstyle=\ttfamily\small,  % 使用等宽字体，大小为小号
+    commentstyle=\color{gray},  % 注释颜色为灰色
+    keywordstyle=\color{blue},  % 关键字颜色为蓝色
+    stringstyle=\color{red},    % 字符串颜色为红色
+    breaklines=true,            % 自动换行
+    frame=shadowbox,            % 添加阴影边框
+    rulesepcolor=\color{gray},  % 边框颜色
+    captionpos=b,               % 标题位置在底部
+    numbers=left,               % 行号在左侧
+    numberstyle=\tiny\color{gray},  % 行号样式
+    tabsize=4                   % 制表符大小
+}
+
+\title{CS 6158 Midterm Report 2}
+\author{Han Li (hl2595) & Beichen Yu (by325)}
+\date{November 2025}
+
+\begin{document}
+
+\maketitle
+
+
+% Write 2-3 pages about how your project is going. How far along are you in your project? What challenges have you faced? Are you still on track to complete your deliverables by the end of the semester?  
+% 本报告应作为前一份报告的补充
+    
+
+
+\section{Introduction}
+A single LLM is prone to falling into the "pattern matching trap," meaning it lacks in-depth analysis of the test and tend to make a judgment about the type based on a single keyword, such as once seeing "Hashmap" then implies the test belong to an unordered collection. Therefore, we propose a multi-agent system designed to provide context information and guide the LLM to think more deeply to accurately determine the type of the tests in the FlakeBench dataset. 
+
+\section{Current Progress}
+% Our main method is shown in Figure 1. 
+% Standard版本用于模型训练（仅包含核心字段），External版本用于分析评估（包含id、few-shot样本、上下文信息、特征提示等完整元数据），为后续的精确评估和错误分析提供支持。
+\subsection{Multi-dimensional Prompt Enhancement}
+\subsubsection{Few-shot Samples via API Signature Matching}
+% API签名提取的相似案例包含推理过程吗
+% 正则和AST是不是都用了
+To simulate the process of human experts recalling similar cases to help judgements, we retrieve the k most relevant cases to the current test based on API signatures. First, we use regular expressions and AST parsing to extract key API calls (including method calls, annotations, assertions, etc.) from the test code. Then, we calculate the similarity between the test code and the training set samples using Jaccard similarity. Finally, we retrieve the Top-K most similar cases (default k=3, minimum similarity 0.1) and format them for insertion into the prompts. These similar cases provide concrete references for the LLM (Local Level Management) system. By comparing its own code with these cases, the LLM can make more accurate classification decisions, avoiding the uncertainty of relying solely on "feeling."
+
+Given a query test $T_q$ and a training sample $T_i$, we compute their similarity 
+based on API signatures:
+
+\begin{equation}
+\text{sim}(T\_q, T\_i) = \frac{|A\_q \cap A\_i|}{|A\_q \cup A\_i|}
+\end{equation}
+
+where $A\_q = \textsc{Extract}(T\_q)$ and $A\_i = \textsc{Extract}(T\_i)$ are the sets of API signatures extracted from the query test and training sample, respectively.
+
+\subsubsection{Feature-based Hints}
+
+
+\subsubsection{Context Extraction}
+The FlakyLens dataset only retains code snippets of test methods, lacking crucial contextual information, making it impossible for the model to understand the complete execution environment of the tests. Thus, we designed an automated context extraction mechanism to recover the runtime environment information of test cases from the source code repository.
+
+Given a project name (e.g., apache\_hadoop) and a complete test name (e.g., \textit{TestClass.testMethod}), the system first performs a shallow clone from GitHub to obtain the project's source code. Subsequently, it sequentially attempts filename matching, class declaration text search, and recursive package path search to find the target test file. Once the target file is found, regular expressions are used to match the method signature, traversing upward to collect method annotations (e.g., @Test, @Before, @Mock), and the complete method body is extracted based on a bracket matching algorithm (i.e. bracket depth counting: encountering \{ then depth +1, encountering \} then depth -1, depth returns to 0 then  the method ends).
+
+In addition to the method body, the system also extracts the context window surrounding the method declaration (20 lines before and after by default), which includes class-level field declarations, other helper methods, class annotations, and import statements. This information helps the model understand the class structure and dependencies of the test.
+
+Finally, the system searches the entire repository for invocations of the method using regular expressions. The search excludes the test file itself and returns a maximum of 10 invocations, including the file path, line number, and corresponding code, to reveal the method's use case in the project. An example of the context information extracted is shown below.
+
+\begin{lstlisting}[style=mystyle, caption=Example Context Information, label=lst:json_example]
+{
+    "project": "apache_hadoop",
+    "file_path": "src/test/java/...",
+    "class_name": "TestDelegationTokenRenewer",
+    "method_name": "testAddRemoveRenewAction",
+    "annotations": "@Test\n@Before",          
+    "method_block": "public void test...",     
+    "surrounding_window": "class Test...",    
+    "invocations": [                           
+        {
+            "file_path": "src/main/java/...",
+            "line_number": 123,
+            "line_preview": "renewer.testMethod();"
+        }
+    ]
+}
+\end{lstlisting}
+
+\subsection{Multi-Agent System}
+
+After observing the failure cases from our previous attempts using few-shot learning, original test context, and feature frequency statistics, we identified a critical bottleneck. Due to the extreme imbalance of the dataset (where non-flaky tests vastly outnumber flaky ones) and the difficulty of synthesizing realistic flaky tests, the few-shot examples retrieved were almost exclusively non-flaky. While this helped recall non-flaky cases, it provided little guidance for identifying actual flakiness. Similarly, the external context proved ineffective because unit tests are often written in isolation, and their production usage context is rarely available within the test codebase. Furthermore, relying on feature frequency caused the model to over-focus on specific keywords, ignoring the long-term causal reasoning required to understand the test logic.
+
+To address these issues and encourage the model to pay attention to features that require longer attention spans, as well as to foster more rational and comprehensive reasoning, we designed a two-agent system: a \textbf{Reasoning Agent} and an \textbf{Inferring Agent}. This design also adapts to the real-world scenario where non-flaky tests are the majority.
+
+The \textbf{Reasoning Agent} is responsible for analyzing the test code structure, identifying potential risk points (such as concurrency primitives, resource management, or time dependencies), and constructing a logical chain of thought. The \textbf{Inferring Agent} then takes this reasoning chain, along with the few-shot examples, to make the final verdict. The overall process leans towards a "presumption of innocence," meaning a test is considered non-flaky unless there is solid evidence to the contrary. We separated these two steps to prevent the model from hallucinating a justification for a premature conclusion—essentially "shooting the arrow and then painting the target."
+
+Although this design achieved near 100\% accuracy on non-flaky tests, its performance on flaky tests was still unsatisfactory. The model often identified critical risks but dismissed them as negligible. To solve this, we introduced a \textbf{"Courtroom Mechanism."} We split the reasoning process into two opposing roles: an \textbf{Analyst} (Defender) and an \textbf{Auditor} (Challenger), with the Inferring Agent acting as the \textbf{Judge}.
+
+\begin{itemize}
+    \item \textbf{The Analyst} provides the initial assessment and defends the test's stability, explaining why certain risks are acceptable in the current context.
+    \item \textbf{The Auditor} plays a critical role, specifically looking for loopholes in the Analyst's logic (e.g., "Is the timeout too short?", "Are static variables cleaned up?", "Is the async wait sufficient?"). Its core philosophy is to question surface-level stability mechanisms and challenge memory operations.
+\end{itemize}
+
+These two agents engage in a two-round debate. The Judge then makes a fair and impartial ruling based on the debate history, the code, and the few-shot examples. This mechanism minimizes one-sided bias and ensures that every potential feature is thoroughly scrutinized.
+
+\subsection{Featuring Agent}
+To provide LLM with more easily understood structured information and prevent it from making errors by reasoning from large amounts of statements, we use static analysis to create structured JSON information for each test that explicitly guides LLM reasoning.
+
+\subsection{Evaluation Implementation}
+
+To assess the effectiveness of our multi-agent courtroom system, we conduct experiments on the FlakyLens dataset, which contains real-world flaky tests with manual labels across six categories: Async, Concurrency (Conc), Time, Unordered Collection (UC), Order Dependency (OD), and Non-flaky. Due to time constraints and API cost considerations, we evaluate our system on all 280 flaky test cases and a randomly sampled subset of 1,000 non-flaky cases from the full dataset.
+
+
+\paragraph{Baseline.} We establish a baseline using a zero-shot approach with DeepSeek-V3 as the underlying LLM. In this configuration, the model receives only the test code and a simple classification prompt without any multi-agent reasoning, debate mechanism, few-shot examples, or contextual enhancements. This baseline represents the default behavior of a state-of-the-art LLM when directly applied to flaky test classification.
+
+\paragraph{Metrics.} We evaluate our system using category-wise F1 scores, which measure the harmonic mean of precision and recall for each flaky test type. Given the highly imbalanced nature of the dataset (where non-flaky tests significantly outnumber flaky ones), category-wise metrics provide a more informative assessment than overall accuracy. We also report the macro-average F1 score across all categories to summarize the system's overall performance.
+
+\subsection{Experimental Results}
+
+Table~1 presents the category-wise F1 scores comparing our multi-agent system against the zero-shot baseline, both using DeepSeek-V3.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l|cccccc|c}
+\hline
+\textbf{System} & \multicolumn{6}{c|}{\textbf{Categories}} & \textbf{Macro} \\
+ & Async. & Conc. & Time & UC & OD & Non-flaky & Avg. \\
+\hline
+Baseline (Zero-shot) & 11.84 & 13.51 & 24.24 & 9.76 & 16.13 & 75.28 & 25.13 \\
+Ours (Multi-agent) & \textbf{27.63} & \textbf{24.32} & \textbf{57.58} & \textbf{24.39} & \textbf{31.18} & \textbf{94.82} & \textbf{43.32} \\
+\hline
+\end{tabular}
+\caption{Category-wise F1 scores (\%) for flaky test classification using DeepSeek-V3. Our multi-agent courtroom system significantly outperforms the zero-shot baseline across all categories.}
+\end{table}
+
+Our multi-agent system demonstrates substantial improvements across all categories. Most notably, we achieve 94.82\% F1 score on Non-flaky tests, confirming the effectiveness of our "presumption of innocence" design philosophy. The courtroom mechanism successfully scrutinizes potential flakiness while avoiding false positives. For flaky test categories, we observe particularly strong performance on Time-related flakiness (57.58\%), representing a 138\% relative improvement over the baseline. The Order Dependency category (31.18\%) shows solid improvement, validating our hypothesis that the debate mechanism helps surface non-obvious risks such as shared state pollution and missing cleanup logic. The Async category (27.63\%) benefits from the Auditor's explicit focus on missing synchronization mechanisms and callback completion guarantees.
+
+
+
+
+
+
+
+
+\section{Challenges}
+Throughout the development of our multi-agent system, we encountered several significant challenges that shaped our understanding of flaky test classification.
+
+\subsection{Difficulty of Structured Information Construction}
+
+
+
+
+\subsection{The Courtroom Balance Problem}
+
+One of our earliest challenges was achieving a balanced debate between the Analyst and Auditor agents. Initially, the Judge consistently favored the Analyst's arguments, even when the Auditor raised valid concerns. Upon analyzing the debate logs, we discovered that the Auditor's prompt used adversarial language such as "nitpicker" and "argumentative," which caused it to appear irrational and rely on subjective speculation (e.g., "What if the server crashes?"). In contrast, the Analyst maintained a calm, evidence-based tone. We resolved this by redefining the Auditor as a \textbf{"Rational Code Auditor"} that provides objective, code-referenced critiques, making its arguments credible enough for the Judge to consider seriously.
+
+\subsection{Systematic Bias Toward Time-Related Flakiness}
+
+A more subtle challenge emerged during testing: the Auditor exhibited a systematic bias toward classifying tests as Time-related flakiness whenever it encountered timeout parameters or performance-sensitive code. This occurred because the original prompt prioritized "time risks" in its checklist, causing the Auditor to conflate the presence of timeouts (which are often merely verification mechanisms) with actual time-dependent flakiness. We corrected this by restructuring the Auditor's prompt to ensure equal treatment of all five flaky test categories, providing explicit, detailed checking criteria for each type. For example, the Time category now emphasizes dependencies on system time or timezone rather than simply the existence of timeout values. However, despite this balanced restructuring, Time-related features remain inherently more salient in code (e.g., explicit use of \texttt{sleep}, \texttt{timeout}), leading to residual bias in ambiguous cases.
+
+\subsection{The Fundamental Limitation of Reasoning-Based Approaches}
+
+Perhaps the most profound challenge we identified is a fundamental limitation of applying reasoning-capable LLMs to this task. After extensive debugging and case analysis, we observed that many flaky test cases are genuinely ambiguous—determining the correct category often requires inferring the annotator's intent rather than performing objective logical reasoning. This is analogous to answering multiple-choice exam questions where several options appear defensible, but only one matches what the question writer considered correct.
+
+Consider the following insight: \textbf{flaky test classification is fundamentally an annotator intent inference problem, not a pure logical reasoning task}. Even state-of-the-art models like Gemini 2.5 Flash and DeepSeek-V3 struggle to identify the "true key parts" that determine the category, because what constitutes the "key part" is subjective and defined by the human annotator's perspective. Two human experts might reasonably disagree on whether a test exhibiting both timeout behavior and thread synchronization issues should be classified as Time or Concurrency—the "correct" answer depends on which feature the original annotator prioritized.
+
+This realization suggests that reasoning-based approaches may be inherently disadvantaged for this task. The original FlakyLens paper achieved strong results using a fine-tuned BERT model, which learns to \textbf{pattern-match the annotator's decision-making process} rather than perform explicit reasoning. Fine-tuning essentially teaches the model to "think like the annotator"—to recognize which features the annotator considered decisive and which they deemed secondary. In contrast, our prompt-based multi-agent system, despite its sophisticated debate mechanism and contextual enhancements, relies on the model's general reasoning abilities, which may produce logically sound but "incorrect" (by annotator standards) classifications.
+
+The debate mechanism, while improving consistency and reducing obvious errors, cannot fundamentally solve this annotator-alignment problem. When the Auditor and Analyst debate whether a test is Time-flaky or Concurrency-flaky, both may construct perfectly valid arguments—but without access to the annotator's mental model, the Judge has no principled way to choose the "right" answer. This explains why many of our misclassified cases, upon expert analysis, appeared defensible from multiple perspectives.
+
+
+
+\section{Future Work}
+These challenges point toward a hybrid approach combining our multi-agent system's interpretability with fine-tuned models' annotator-alignment capabilities. A promising direction is to use the debate mechanism to generate training data, then apply human curation to align it with annotator intent. Specifically, human experts would edit the machine-generated debates by removing incorrect reasoning paths, eliminating biased arguments, and adding corrective steps that steer toward the ground-truth label. This essentially "forces" the training data to match the annotator's mental model—teaching the model not just the correct answer, but how to reason in the annotator's preferred way. This transforms our system from a pure inference tool into a data generation framework, where machine debates provide raw material and human curation shapes them to capture the subjective judgment patterns we need to replicate.
+
+
+
+\section{Tracking}
+
+% \section*{AI Usage Clarification}
+
+\section*{References}
+AI was used to polish some of the expressions, such as formula explanations and code diagrams.
+
+\end{document}

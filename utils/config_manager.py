@@ -64,11 +64,49 @@ def load_config(name: str) -> Optional[Dict]:
         with open(config_file, 'r', encoding='utf-8') as f:
             config = json.load(f)
         
+        # 自动修复路径的辅助函数
+        def fix_path(path_str):
+            if not path_str:
+                return None
+            
+            path = Path(path_str)
+            if path.exists():
+                return path
+            
+            # 尝试修复 "CS6158 project" -> "CS6158_project"
+            if "CS6158 project" in path_str:
+                new_path_str = path_str.replace("CS6158 project", "CS6158_project")
+                new_path = Path(new_path_str)
+                if new_path.exists():
+                    print(f"⚠️  自动修复路径: {path_str} -> {new_path_str}")
+                    return new_path
+            
+            # 尝试基于当前项目根目录修复相对路径
+            # 假设路径包含 'dataset'
+            if "dataset" in path_str:
+                try:
+                    # 提取 'dataset' 及其之后的部分
+                    parts = path_str.split("dataset")
+                    if len(parts) > 1:
+                        # 重新构建相对于当前项目根目录的路径
+                        # utils/config_manager.py -> utils/ -> project_root
+                        current_project_root = Path(__file__).parent.parent
+                        relative_path = "dataset" + parts[1]
+                        new_path = current_project_root / relative_path
+                        
+                        if new_path.exists():
+                            print(f"⚠️  自动修复路径: {path_str} -> {new_path}")
+                            return new_path
+                except Exception:
+                    pass
+            
+            return path
+
         # 转换字符串路径为Path对象
         if 'test_dataset' in config:
-            config['test_dataset'] = Path(config['test_dataset'])
+            config['test_dataset'] = fix_path(config['test_dataset'])
         if 'train_dataset' in config and config['train_dataset']:
-            config['train_dataset'] = Path(config['train_dataset'])
+            config['train_dataset'] = fix_path(config['train_dataset'])
         
         return config
     

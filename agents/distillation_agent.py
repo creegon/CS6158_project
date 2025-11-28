@@ -14,6 +14,7 @@ import threading
 from agents.base_agent import BaseAgent
 from agents.reasoning_agent import ReasoningAgent
 from agents.inferring_agent import InferringAgent
+from agents.challenger_agent import ChallengerAgent
 from utils import (
     load_csv,
     sample_data,
@@ -56,7 +57,9 @@ class DistillationAgent(BaseAgent):
                  top_k_shots: int = 3,
                  use_context: bool = False,
                  use_feature_hint: bool = True,
-                 use_reasoning_guide: bool = False,
+                 use_reasoning_guide: bool = True,
+                 use_debate: bool = True,
+                 target_ids: Optional[List[int]] = None,
                  **kwargs):
         """
         初始化DistillationAgent
@@ -64,47 +67,40 @@ class DistillationAgent(BaseAgent):
         Args:
             dataset_path: 数据集路径
             output_dir: 输出目录
-            test_mode: 测试模式 ['all', 'first', 'last', 'random']
-            test_size: 测试时使用的数据量
-            random_seed: 随机种子(默认42,用于复现随机抽样)
+            test_mode: 测试模式 ('all', 'random', 'head')
+            test_size: 测试样本数
+            random_seed: 随机种子
             code_column: 代码列名
+            use_reasoning_guide: 是否使用推理指引
+            use_debate: 是否启用辩论模式 (Reasoning vs Challenger)
+            parallel_workers: 并行工作线程数
             batch_size: 批次大小
-            batch_delay: 批次延迟（秒）
-            checkpoint_interval: 检查点保存间隔
-            parallel_workers: 并行推理的工作线程数，1表示串行处理
-            api_matcher: API签名匹配器，用于检索few-shot examples
-            top_k_shots: 使用的few-shot样本数量
-            use_context: 是否启用上下文提取(从external_projects中提取)
-            use_feature_hint: 是否启用特征词频提示(基于归一化频率分析)
-            use_reasoning_guide: 是否启用推理指引Agent(双Agent推理链)
-            **kwargs: 传递给BaseAgent的其他参数
+            batch_delay: 批次延迟
+            api_matcher: API匹配器
+            top_k_shots: few-shot数量
+            use_context: 是否使用上下文
+            use_feature_hint: 是否使用特征提示
+            target_ids: 指定要处理的目标ID列表
+            **kwargs: 传递给BaseAgent的参数
         """
         super().__init__(**kwargs)
         
-        self.dataset_path = Path(dataset_path) if dataset_path else DATASET_PATH
-        self.output_dir = Path(output_dir) if output_dir else OUTPUT_DIR
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+        self.dataset_path = Path(dataset_path) if dataset_path else Path(DATASET_PATH)
+        self.output_dir = Path(output_dir) if output_dir else Path(OUTPUT_DIR)
         self.test_mode = test_mode
         self.test_size = test_size
         self.random_seed = random_seed
         self.code_column = code_column
-        
-        self.batch_size = batch_size or API_BATCH_SIZE
-        self.batch_delay = batch_delay if batch_delay is not None else API_BATCH_DELAY
-        self.checkpoint_interval = checkpoint_interval or CHECKPOINT_INTERVAL
-        self.parallel_workers = max(1, parallel_workers)  # 确保至少为1
-        
-        # 推理指引相关
         self.use_reasoning_guide = use_reasoning_guide
+        self.use_debate = use_debate
+        self.parallel_workers = parallel_workers
+        self.batch_size = batch_size if batch_size is not None else 5
+        self.batch_delay = batch_delay if batch_delay is not None else 1.0
+        self.checkpoint_interval = checkpoint_interval if checkpoint_interval is not None else 10
+        self.target_ids = target_ids
         
-        # 初始化ReasoningAgent（推理指引Agent）
-        if use_reasoning_guide:
-            self.reasoning_agent = ReasoningAgent(**kwargs)
-        else:
-            self.reasoning_agent = None
-        
-        # 初始化InferringAgent（判断Agent）
+        # 初始化子Agent
+        self.reasoning_agent = ReasoningAgent(**kwargs)
         self.inferring_agent = InferringAgent(
             code_column=code_column,
             api_matcher=api_matcher,
@@ -113,13 +109,10 @@ class DistillationAgent(BaseAgent):
             use_feature_hint=use_feature_hint,
             **kwargs
         )
+        self.challenger_agent = ChallengerAgent(**kwargs) if use_debate else None
         
-        # 加载系统prompt（用于convert_to_alpaca_format）
-        self.system_prompt = load_prompt('distillation_system')
-        
-        # 存储结果
-        self.distilled_dataset: List[Dict] = []
-        self.failed_indices: List[int] = []
+        self.distilled_dataset = []
+        self.failed_indices = []
         
         # 线程安全锁
         self._lock = threading.Lock()
@@ -189,17 +182,96 @@ class DistillationAgent(BaseAgent):
         Returns:
             Alpaca格式的数据（包含所有额外信息），失败返回None
         """
-        # 生成推理指引
-        reasoning_guide = self.generate_reasoning_guide(row)
+        # 1. 生成推理指引 (Reasoning Guide)
+        reasoning_guide = None
+        debate_history = None
+        debate_context = {}
         
-        # 调用InferringAgent进行推断
-        reasoning, metadata = self.inferring_agent.infer_from_row(row, reasoning_guide)
+        if self.use_reasoning_guide:
+            reasoning_guide = self.reasoning_agent.generate_from_row(row, self.code_column)
+            if reasoning_guide:
+                debate_context['original_analysis'] = reasoning_guide
+                
+            if not reasoning_guide:
+                print(f"⚠ 无法生成推理指引 (ID: {idx})")
+                return None
+                
+            # 2. 辩论环节 (Debate Loop - 2 Rounds)
+            if self.use_debate and self.challenger_agent:
+                project = row.get('project', 'Unknown')
+                test_name = row.get('test_name', 'Unknown')
+                full_code = row.get(self.code_column, '')
+                
+                # --- Round 1 ---
+                critique_1 = self.challenger_agent.challenge(project, test_name, full_code, reasoning_guide)
+                
+                if critique_1:
+                    debate_context['critique_1'] = critique_1
+                    
+                    # Round 1 Defense
+                    defense_1 = self.reasoning_agent.defend_analysis(project, test_name, full_code, reasoning_guide, critique_1)
+                    
+                    if defense_1:
+                        debate_context['defense_1'] = defense_1
+                        
+                        # 构建第一轮历史
+                        history_r1 = f"""
+【原始分析 (Analyst)】
+{reasoning_guide}
+
+【审查员质疑 Round 1 (Challenger)】
+{critique_1}
+
+【分析师辩护 Round 1 (Defender)】
+{defense_1}
+"""
+                        # --- Round 2 ---
+                        # Challenger 基于第一轮历史进行第二轮质疑
+                        critique_2 = self.challenger_agent.challenge(project, test_name, full_code, history_r1)
+                        
+                        if critique_2:
+                            debate_context['critique_2'] = critique_2
+                            
+                            # 辩论在第二轮质疑后结束，不再进行辩护，确保双方发言机会均等 (2 vs 2)
+                            debate_history = f"""{history_r1}
+
+【审查员质疑 Round 2 (Challenger)】
+{critique_2}
+"""
+                        else:
+                            # Critique 2 failed or no further critique
+                            debate_history = history_r1
+                            
+                        # 将完整的辩论历史作为最终的 reasoning_guide
+                        reasoning_guide = debate_history
+                    else:
+                        # Defense 1 failed
+                        reasoning_guide = f"""
+【原始分析 (Analyst)】
+{reasoning_guide}
+
+【审查员质疑 (Challenger)】
+{critique_1}
+
+(Defender failed to respond)
+"""
+
+        # 3. 生成最终推理 (Final Inference)
+        # 注意：此时的 reasoning_guide 可能包含了辩论历史
+        result_tuple = self.inferring_agent.run(
+            row.get('project', 'Unknown'),
+            row.get('test_name', 'Unknown'),
+            row.get(self.code_column, ''),
+            reasoning_guide=reasoning_guide
+        )
         
-        if reasoning is None:
+        if result_tuple is None:
             with self._lock:
                 print(f"\n⚠ 第 {idx} 条数据处理失败")
                 self.failed_indices.append(idx)
             return None
+            
+        reasoning, metadata = result_tuple
         
         # 从metadata中提取few_shot_examples（保持向后兼容）
         few_shot_examples = metadata.get('few_shot_examples', None)
@@ -225,8 +297,8 @@ class DistillationAgent(BaseAgent):
         if metadata.get('feature_hints'):
             alpaca_item['feature_hints'] = metadata['feature_hints']
         
-        if reasoning_guide:
-            alpaca_item['reasoning_guide'] = reasoning_guide
+        if debate_context:
+            alpaca_item['debate_context'] = debate_context
         
         return alpaca_item
     
@@ -277,8 +349,20 @@ class DistillationAgent(BaseAgent):
         
         df = load_csv(self.dataset_path)
         
+        # 如果指定了target_ids，优先使用ID过滤
+        if self.target_ids:
+            print(f"\n🎯 目标ID模式: 仅处理 {len(self.target_ids)} 个指定样本")
+            # 确保ID列存在
+            if 'id' not in df.columns:
+                print("✗ 数据集中未找到 'id' 列，无法进行ID过滤")
+                return {}
+                
+            df = df[df['id'].isin(self.target_ids)]
+            if len(df) != len(self.target_ids):
+                print(f"   ⚠️  警告: 仅找到 {len(df)} 个匹配样本 (目标 {len(self.target_ids)} 个)")
+                
         # 根据测试模式采样数据
-        if self.test_mode != 'all':
+        elif self.test_mode != 'all':
             print(f"\n📊 测试模式: {self.test_mode}, 采样 {self.test_size} 条数据")
             if self.test_mode == 'random':
                 if self.random_seed is not None:

@@ -31,7 +31,10 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 
-# 当前使用的提供商（可选：deepseek, siliconflow）
+# Gemini配置
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAgDhx4kCTx4fmKs_Of69rX3DkkHairV7c")
+
+# 当前使用的提供商（可选：deepseek, siliconflow, gemini）
 CURRENT_PROVIDER = os.getenv("CURRENT_PROVIDER", "deepseek")
 
 # 根据提供商选择API配置
@@ -40,7 +43,7 @@ def get_api_config(provider: str = None):
     获取指定提供商的API配置
     
     Args:
-        provider: 提供商名称 (deepseek/siliconflow)
+        provider: 提供商名称 (deepseek/siliconflow/gemini)
         
     Returns:
         (api_key, base_url, default_model) 的元组
@@ -50,7 +53,8 @@ def get_api_config(provider: str = None):
     # 默认模型配置
     default_models = {
         "deepseek": "deepseek-chat",
-        "siliconflow": "Qwen/Qwen2.5-7B-Instruct"
+        "siliconflow": "Qwen/Qwen2.5-7B-Instruct",
+        "gemini": "gemini-2.0-flash-exp"
     }
     
     if provider.lower() == "deepseek":
@@ -61,6 +65,9 @@ def get_api_config(provider: str = None):
         # 优先从环境变量读取自定义模型,否则使用默认模型
         model = os.getenv("CURRENT_MODEL", default_models["siliconflow"])
         return SILICONFLOW_API_KEY, SILICONFLOW_BASE_URL, model
+    elif provider.lower() == "gemini":
+        model = os.getenv("CURRENT_MODEL", default_models["gemini"])
+        return GEMINI_API_KEY, None, model
     else:
         raise ValueError(f"不支持的提供商: {provider}")
 
@@ -80,6 +87,10 @@ SUPPORTED_MODELS = {
     ],
     "siliconflow": [
         "Qwen/Qwen3-8B",
+        "Qwen/Qwen2.5-7B-Instruct",
+    ],
+    "gemini": [
+        "gemini-2.5-flash-preview-09-2025"
     ]
 }
 
@@ -100,7 +111,7 @@ def get_provider_models(provider: str) -> list:
 # 模型配置（向后兼容）
 DEFAULT_MODEL = CURRENT_MODEL
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_MAX_TOKENS = 2000
+DEFAULT_MAX_TOKENS = 8192  # 设为最大值以支持长输出
 DEFAULT_MAX_RETRIES = 3
 
 # 数据集路径

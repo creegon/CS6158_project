@@ -6,6 +6,13 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 from openai import OpenAI
 
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
+
 from config import (
     DEEPSEEK_API_KEY,
     DEEPSEEK_BASE_URL,
@@ -68,11 +75,17 @@ class BaseAgent(ABC):
         self.max_retries = max_retries or DEFAULT_MAX_RETRIES
         self.system_prompt = system_prompt or self.get_default_system_prompt()
         
-        # 初始化OpenAI客户端
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        # 初始化客户端
+        if self.provider == "gemini":
+            if genai is None:
+                raise ImportError("请安装 google-genai 库以使用 Gemini 模型: pip install google-genai")
+            self.client = genai.Client(api_key=self.api_key)
+        else:
+            # 初始化OpenAI客户端
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
         
         # 统计信息
         self.stats = {
@@ -119,22 +132,45 @@ class BaseAgent(ABC):
             try:
                 self.stats["total_calls"] += 1
                 
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                
-                content = response.choices[0].message.content
-                
-                # 更新统计
-                self.stats["successful_calls"] += 1
-                if hasattr(response, 'usage'):
-                    self.stats["total_tokens"] += response.usage.total_tokens
+                if self.provider == "gemini":
+                    # Gemini API调用
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=temperature,
+                        max_output_tokens=8192  # 设为Gemini最大值
+                    )
+                    
+                    response = self.client.models.generate_content(
+                        model=self.model,
+                        contents=user_prompt,
+                        config=config
+                    )
+                    
+                    content = response.text
+                    
+                    # 更新统计
+                    self.stats["successful_calls"] += 1
+                    if hasattr(response, 'usage_metadata'):
+                        self.stats["total_tokens"] += response.usage_metadata.total_token_count
+                        
+                else:
+                    # OpenAI API调用
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                    
+                    content = response.choices[0].message.content
+                    
+                    # 更新统计
+                    self.stats["successful_calls"] += 1
+                    if hasattr(response, 'usage'):
+                        self.stats["total_tokens"] += response.usage.total_tokens
                 
                 return content
                 

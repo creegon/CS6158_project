@@ -97,7 +97,7 @@ def switch_provider(provider: str, model: Optional[str] = None) -> bool:
     Returns:
         是否切换成功
     """
-    valid_providers = ['deepseek', 'siliconflow']
+    valid_providers = ['deepseek', 'siliconflow', 'gemini']
     provider = provider.lower()
     
     if provider not in valid_providers:
@@ -260,7 +260,7 @@ def show_all_models(provider: Optional[str] = None, search: Optional[str] = None
     if provider:
         providers = [provider.lower()]
     else:
-        providers = ['deepseek', 'siliconflow']
+        providers = ['deepseek', 'siliconflow', 'gemini']
     
     for prov in providers:
         models = get_available_models(prov)
@@ -322,7 +322,7 @@ def list_providers() -> list:
     Returns:
         提供商名称列表
     """
-    return ['deepseek', 'siliconflow']
+    return ['deepseek', 'siliconflow', 'gemini']
 
 
 def get_supported_models(provider: Optional[str] = None) -> list:
@@ -356,7 +356,8 @@ def validate_provider_config(provider: str) -> Tuple[bool, str]:
         if not api_key:
             return False, f"{provider.upper()}_API_KEY 未配置"
         
-        if not base_url:
+        # Gemini 不需要 base_url
+        if provider.lower() != 'gemini' and not base_url:
             return False, f"{provider.upper()}_BASE_URL 未配置"
         
         return True, "配置完整"
