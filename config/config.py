@@ -32,7 +32,7 @@ SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 
 # Gemini配置
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAgDhx4kCTx4fmKs_Of69rX3DkkHairV7c")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # 当前使用的提供商（可选：deepseek, siliconflow, gemini）
 CURRENT_PROVIDER = os.getenv("CURRENT_PROVIDER", "deepseek")
